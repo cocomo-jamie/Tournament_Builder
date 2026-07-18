@@ -554,7 +554,7 @@ function RegistrationForm({ formRef }) {
               </label>
             </>
           )}
-        </Card>
+        </FormCard>
 
         {/* Submit */}
         <button type="button" disabled={!valid} onClick={() => setState("success")} style={{
