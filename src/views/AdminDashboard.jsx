@@ -13,11 +13,13 @@ import {
   Timer, Ban, SkipForward, Shuffle, LayoutGrid, Sliders,
   BadgeCheck, QrCode, Scissors
 } from "lucide-react";
+import { useEvent } from "../context/EventContext";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi } from "../services/api";
+import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 
 /* ═══════════════════════════════════════════════════════════
-   BRAND & STYLES
+   STYLES
    ═══════════════════════════════════════════════════════════ */
-const B = { primary: "#C1121F", secondary: "#1B4D3E", accent: "#D4A843", dark: "#020e4b", light: "#F4F1EA" };
 const S = {
   card: { background: "#ffffff06", border: "1px solid #ffffff10", borderRadius: 16, padding: 20 },
   input: { width: "100%", padding: "10px 14px", background: "#ffffff08", border: "1px solid #ffffff15", borderRadius: 10, color: "#fff", fontSize: 13, fontFamily: "'Inter',sans-serif", outline: "none" },
@@ -31,19 +33,7 @@ const S = {
 /* ═══════════════════════════════════════════════════════════
    MOCK DATA
    ═══════════════════════════════════════════════════════════ */
-const INIT_REGS = [
-  { id: 1, teamName: "The Pallino Pushers", captain: "Jane Smith", email: "jane@email.com", phone: "+1 250-555-0101", player2: "Mike Chen", p2shirt: "L", method: "e_transfer", payment: "paid", status: "confirmed", code: "EF-101", fee: 100, donation: 25, total: 125, date: "2026-07-10", slogan: "Born to throw" },
-  { id: 2, teamName: "Bocce Ballers", captain: "Tom Wilson", email: "tom@email.com", phone: "+1 250-555-0102", player2: "Sarah Lee", p2shirt: "M", method: "e_transfer", payment: "pending", status: "submitted", code: "EF-102", fee: 100, donation: 0, total: 100, date: "2026-07-12", slogan: "Roll with it" },
-  { id: 3, teamName: "Court Jesters", captain: "Amy Park", email: "amy@email.com", phone: "+1 250-555-0103", player2: "Dave Brown", p2shirt: "XL", method: "cash", payment: "pending", status: "submitted", code: "EF-103", fee: 100, donation: 50, total: 150, date: "2026-07-14", slogan: "" },
-  { id: 4, teamName: "Rolling Stones", captain: "Chris Dao", email: "chris@email.com", phone: "+1 250-555-0104", player2: "Lin Zhang", p2shirt: "S", method: "stripe", payment: "paid", status: "confirmed", code: "EF-104", fee: 100, donation: 100, total: 200, date: "2026-07-15", slogan: "Can't stop us" },
-  { id: 5, teamName: "Lawn & Order", captain: "Pat Riley", email: "pat@email.com", phone: "+1 250-555-0105", player2: "Jo Kim", p2shirt: "M", method: "e_transfer", payment: "pending", status: "submitted", code: "EF-105", fee: 100, donation: 0, total: 100, date: "2026-07-16", slogan: "Justice is served" },
-];
-const INIT_VOLS = [
-  { id: 1, name: "Lisa Wong", email: "lisa@email.com", phone: "+1 250-555-0201", role: "Field Judges", other: ["Registration Desk"], exp: "3 charity events", certs: "First Aid", status: "pending" },
-  { id: 2, name: "Mark Taylor", email: "mark@email.com", phone: "+1 250-555-0202", role: "Bar Staff", other: [], exp: "5 years bartending", certs: "Serving It Right", status: "approved" },
-  { id: 3, name: "Sue Garcia", email: "sue@email.com", phone: "+1 250-555-0203", role: "Food Staff", other: ["Token Purchase Crew"], exp: "BBQ enthusiast", certs: "Food Safe L1", status: "pending" },
-  { id: 4, name: "Dan Fisher", email: "dan@email.com", phone: "+1 250-555-0204", role: "Media", other: [], exp: "Amateur photographer", certs: "", status: "pending" },
-];
+// TODO: Pass 2 — wire to artifacts table or keep as static config
 const INIT_ARTIFACTS = [
   { id: 1, type: "schedule", title: "Event Day Schedule", status: "draft", audience: "all" },
   { id: 2, type: "volunteer_package", title: "Volunteer Guide — Field Judges", status: "draft", audience: "volunteers" },
@@ -56,11 +46,13 @@ const INIT_ARTIFACTS = [
 /* ═══════════════════════════════════════════════════════════
    SHARED COMPONENTS
    ═══════════════════════════════════════════════════════════ */
-function StatCard({ icon: Icon, label, value, sub, color = B.accent }) {
+function StatCard({ icon: Icon, label, value, sub, color }) {
+  const { config } = useEvent();
+  const resolvedColor = color || config.brand.accent;
   return (
     <div style={S.card}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "18", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={18} color={color} /></div>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: resolvedColor + "18", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={18} color={resolvedColor} /></div>
         <span style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 1 }}>{label}</span>
       </div>
       <p style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginBottom: 2 }}>{value}</p>
@@ -80,7 +72,9 @@ function MethodIcon({ m }) {
 }
 
 /* Sticky submit bar for batch pattern */
-function SubmitBar({ count, onSubmit, onDiscard }) {
+function SubmitBar({ count, onSubmit, onDiscard, submitting, error }) {
+  const { config } = useEvent();
+  const B = config.brand;
   if (count === 0) return null;
   return (
     <div style={{ position: "sticky", bottom: 0, left: 0, right: 0, background: `${B.accent}15`, borderTop: `2px solid ${B.accent}40`, backdropFilter: "blur(12px)", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 40, marginTop: 20, borderRadius: "14px 14px 0 0" }}>
@@ -89,10 +83,11 @@ function SubmitBar({ count, onSubmit, onDiscard }) {
           <span style={{ fontSize: 13, fontWeight: 900, color: B.accent }}>{count}</span>
         </div>
         <span style={{ fontSize: 13, fontWeight: 600, color: B.accent }}>pending change{count !== 1 ? "s" : ""}</span>
+        {error && <span style={{ fontSize: 12, color: "#ef4444", marginLeft: 10 }}>{error}</span>}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={onDiscard} style={S.btn("#ffffff10", "#ffffffaa")}><Undo2 size={14} /> Discard All</button>
-        <button onClick={onSubmit} style={S.btn(B.accent, B.dark)}><Save size={14} /> Submit Updates</button>
+        <button onClick={onSubmit} disabled={submitting} style={S.btn(B.accent, B.dark)}><Save size={14} /> {submitting ? "Saving..." : "Submit Updates"}</button>
       </div>
     </div>
   );
@@ -102,18 +97,84 @@ function SubmitBar({ count, onSubmit, onDiscard }) {
    BUILD — REGISTRATIONS (with batch submit)
    ═══════════════════════════════════════════════════════════ */
 function RegistrationsPanel() {
-  const [data, setData] = useState(INIT_REGS);
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  const { data: rawRegs, loading: regsLoading } = useRealtimeRegistrations(eventId);
+
+  const data = useMemo(() => {
+    return (rawRegs || []).map(r => ({
+      id: r.id,
+      teamName: r.team_name || "",
+      captain: r.captain_name || "",
+      email: r.captain_email || "",
+      phone: r.captain_phone || "",
+      method: r.payment_method || "",
+      payment: r.payment_status || "pending",
+      status: r.status || "submitted",
+      code: r.reconciliation_code || "",
+      fee: r.fee_amount || 0,
+      donation: r.donation_amount || 0,
+      total: r.total_amount || 0,
+      date: r.created_at ? new Date(r.created_at).toLocaleDateString("en-CA") : "",
+      slogan: r.team_slogan || "",
+      captainShirt: r.captain_shirt || "",
+      captainDiet: r.captain_dietary || "",
+      story: r.team_story || "",
+      imageConsent: r.image_consent || false,
+      waiverAccepted: r.waiver_accepted || false,
+    }));
+  }, [rawRegs]);
+
   const [changes, setChanges] = useState({});
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+
+  useEffect(() => {
+    if (rawRegs) {
+      const validIds = new Set(rawRegs.map(r => r.id));
+      setChanges(prev => {
+        const cleaned = {};
+        for (const [id, val] of Object.entries(prev)) {
+          if (validIds.has(id) || validIds.has(parseInt(id))) cleaned[id] = val;
+        }
+        return cleaned;
+      });
+    }
+  }, [rawRegs]);
 
   const queueChange = (id, field, value) => {
     setChanges(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   };
   const getEffective = (r) => ({ ...r, ...(changes[r.id] || {}) });
   const hasChange = (id) => !!changes[id];
-  const submitAll = () => { setData(prev => prev.map(r => ({ ...r, ...(changes[r.id] || {}) }))); setChanges({}); };
+  const submitAll = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const updates = Object.entries(changes).map(([id, fields]) => ({
+        id,
+        ...(fields.payment !== undefined && { payment_status: fields.payment }),
+        ...(fields.status !== undefined && { status: fields.status }),
+        ...(fields.payment === "paid" && {
+          payment_confirmed_at: new Date().toISOString(),
+        }),
+        ...(fields.status === "confirmed" && {
+          confirmed_at: new Date().toISOString(),
+        }),
+      }));
+      await registrationsApi.batchUpdate(updates);
+      setChanges({});
+    } catch (err) {
+      console.error("Batch update failed:", err);
+      setSubmitError("Failed to save changes. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const discardAll = () => setChanges({});
 
   const filtered = useMemo(() => {
@@ -129,6 +190,7 @@ function RegistrationsPanel() {
 
   return (
     <div>
+      {regsLoading && <p style={{ fontSize: 13, color: "#ffffff50", marginBottom: 12 }}>Loading registrations...</p>}
       <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
           <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#ffffff40" }} />
@@ -187,7 +249,7 @@ function RegistrationsPanel() {
           </tbody>
         </table>
       </div>
-      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} />
+      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} submitting={submitting} error={submitError} />
     </div>
   );
 }
@@ -196,17 +258,66 @@ function RegistrationsPanel() {
    BUILD — VOLUNTEERS (with batch submit)
    ═══════════════════════════════════════════════════════════ */
 function VolunteersPanel() {
-  const [data, setData] = useState(INIT_VOLS);
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  const [rawData, setRawData] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [changes, setChanges] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+
+  useEffect(() => {
+    if (eventId) {
+      setLoading(true);
+      volunteersApi.list(eventId)
+        .then(setRawData)
+        .catch(err => console.error("Failed to load volunteers:", err))
+        .finally(() => setLoading(false));
+    }
+  }, [eventId]);
+
+  const data = useMemo(() => {
+    const roleMap = {};
+    (config.volunteers || []).forEach(r => { roleMap[r.id] = r.title; });
+
+    return rawData.map(v => ({
+      id: v.id,
+      name: [v.first_name, v.last_name].filter(Boolean).join(" ") || "",
+      email: v.email || "",
+      phone: v.phone || "",
+      role: v.primary_role?.title || "",
+      other: (v.other_role_ids || []).map(id => roleMap[id] || "Unknown role").filter(Boolean),
+      exp: v.experience || "",
+      certs: v.certifications || "",
+      status: v.status || "pending",
+    }));
+  }, [rawData, config.volunteers]);
 
   const queue = (id, val) => setChanges(prev => ({ ...prev, [id]: val }));
   const eff = (v) => changes[v.id] !== undefined ? { ...v, status: changes[v.id] } : v;
-  const submitAll = () => { setData(prev => prev.map(v => changes[v.id] !== undefined ? { ...v, status: changes[v.id] } : v)); setChanges({}); };
+  const submitAll = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const updates = Object.entries(changes).map(([id, status]) => ({ id, status }));
+      await volunteersApi.batchUpdate(updates);
+      const fresh = await volunteersApi.list(eventId);
+      setRawData(fresh);
+      setChanges({});
+    } catch (err) {
+      console.error("Volunteer batch update failed:", err);
+      setSubmitError("Failed to save changes. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const discardAll = () => setChanges({});
   const changeCount = Object.keys(changes).length;
 
   return (
     <div>
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50", marginBottom: 12 }}>Loading volunteers...</p>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 20 }}>
         {[{ l: "Total", v: data.length, c: "#fff" }, { l: "Pending", v: data.map(eff).filter(v => v.status === "pending").length, c: "#f59e0b" }, { l: "Approved", v: data.map(eff).filter(v => v.status === "approved").length, c: "#22c55e" }].map((s, i) => (
           <div key={i} style={{ ...S.card, textAlign: "center" }}><p style={{ fontSize: 22, fontWeight: 800, color: s.c }}>{s.v}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>{s.l}</p></div>
@@ -243,7 +354,7 @@ function VolunteersPanel() {
           );
         })}
       </div>
-      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} />
+      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} submitting={submitting} error={submitError} />
     </div>
   );
 }
@@ -252,11 +363,37 @@ function VolunteersPanel() {
    BUILD — FUNDRAISING (with submit)
    ═══════════════════════════════════════════════════════════ */
 function FundraisingPanel() {
-  const [saved, setSaved] = useState(1250);
-  const [current, setCurrent] = useState(1250);
-  const goal = 15000;
-  const pct = Math.min(100, (current / goal) * 100);
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  const goal = config.fundraising.goal || 15000;
+  const [saved, setSaved] = useState(config.fundraising.current || 0);
+  const [current, setCurrent] = useState(config.fundraising.current || 0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+
+  const pct = goal > 0 ? Math.min(100, (current / goal) * 100) : 0;
   const changed = current !== saved;
+
+  useEffect(() => {
+    const configCurrent = config.fundraising.current || 0;
+    setSaved(configCurrent);
+    setCurrent(configCurrent);
+  }, [config.fundraising.current]);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await eventsApi.updateFundraising(eventId, current);
+      setSaved(current);
+    } catch (err) {
+      console.error("Fundraising update failed:", err);
+      setSubmitError("Failed to update. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div>
@@ -273,7 +410,7 @@ function FundraisingPanel() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, textAlign: "center" }}>
           <div><p style={{ fontSize: 24, fontWeight: 900, color: "#fff" }}>${current.toLocaleString()}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Raised</p></div>
           <div><p style={{ fontSize: 24, fontWeight: 900, color: B.accent }}>${(goal - current).toLocaleString()}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Remaining</p></div>
-          <div><p style={{ fontSize: 24, fontWeight: 900, color: B.secondary }}>8%</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Progress</p></div>
+          <div><p style={{ fontSize: 24, fontWeight: 900, color: B.secondary }}>{Math.round(pct)}%</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Progress</p></div>
         </div>
       </div>
       <div style={S.card}>
@@ -283,7 +420,7 @@ function FundraisingPanel() {
             <input type="number" value={current} onChange={e => setCurrent(parseInt(e.target.value) || 0)} style={{ ...S.input, paddingLeft: 28 }} /></div>
         </div>
       </div>
-      <SubmitBar count={changed ? 1 : 0} onSubmit={() => setSaved(current)} onDiscard={() => setCurrent(saved)} />
+      <SubmitBar count={changed ? 1 : 0} onSubmit={handleSubmit} onDiscard={() => setCurrent(saved)} submitting={submitting} error={submitError} />
     </div>
   );
 }
@@ -292,9 +429,34 @@ function FundraisingPanel() {
    BUILD — TOURNAMENT RULES
    ═══════════════════════════════════════════════════════════ */
 function RulesPanel() {
-  const [saved, setSaved] = useState("## Tournament Rules\n\n1. Games are played to 15 points with a 20-minute time cap.\n2. If time expires, the team with more points wins.\n3. Closest ball to the pallino scores. Measurements by field judge are final.\n4. Teams must report to their assigned court within 5 minutes of being called or forfeit.\n5. Captains are responsible for entering and verifying scores.\n6. The tournament referee's decision is final on all disputes.\n7. Have fun — this is for charity!");
-  const [draft, setDraft] = useState(saved);
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  const [saved, setSaved] = useState(config.rules || "");
+  const [draft, setDraft] = useState(config.rules || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
   const changed = draft !== saved;
+
+  useEffect(() => {
+    const configRules = config.rules || "";
+    setSaved(configRules);
+    setDraft(configRules);
+  }, [config.rules]);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await eventsApi.updateRules(eventId, draft);
+      setSaved(draft);
+    } catch (err) {
+      console.error("Rules update failed:", err);
+      setSubmitError("Failed to save rules. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div>
@@ -303,7 +465,7 @@ function RulesPanel() {
         <p style={{ fontSize: 12, color: "#ffffff50", marginBottom: 16 }}>Markdown supported. Published to the /rules page and included in team packages.</p>
         <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={16} style={{ ...S.input, resize: "vertical", lineHeight: 1.7, fontSize: 14 }} />
       </div>
-      <SubmitBar count={changed ? 1 : 0} onSubmit={() => setSaved(draft)} onDiscard={() => setDraft(saved)} />
+      <SubmitBar count={changed ? 1 : 0} onSubmit={handleSubmit} onDiscard={() => setDraft(saved)} submitting={submitting} error={submitError} />
     </div>
   );
 }
@@ -312,6 +474,8 @@ function RulesPanel() {
    BUILD CONTEXT (MAIN)
    ═══════════════════════════════════════════════════════════ */
 function BuildContext() {
+  const { config, eventId } = useEvent();
+  const B = config.brand;
   const [tab, setTab] = useState("registrations");
   const tabs = [
     { id: "registrations", label: "Registrations", icon: Users },
@@ -320,13 +484,42 @@ function BuildContext() {
     { id: "rules", label: "Rules", icon: BookOpen },
   ];
 
+  const { data: rawRegs } = useRealtimeRegistrations(eventId);
+  const [rawVols, setRawVols] = useState([]);
+
+  useEffect(() => {
+    if (eventId) {
+      volunteersApi.list(eventId).then(setRawVols).catch(() => {});
+    }
+  }, [eventId]);
+
+  const regStats = useMemo(() => {
+    const regs = rawRegs || [];
+    const confirmed = regs.filter(r => r.status === "confirmed").length;
+    const pending = regs.length - confirmed;
+    const revenue = regs.filter(r => r.payment_status === "paid").reduce((sum, r) => sum + (r.fee_amount || 0), 0);
+    const donations = regs.reduce((sum, r) => sum + (r.donation_amount || 0), 0);
+    return { total: regs.length, confirmed, pending, revenue, donations };
+  }, [rawRegs]);
+
+  const volStats = useMemo(() => {
+    const vols = rawVols || [];
+    const approved = vols.filter(v => v.status === "approved").length;
+    const pending = vols.filter(v => v.status === "pending").length;
+    return { total: vols.length, approved, pending };
+  }, [rawVols]);
+
+  const fundPct = config.fundraising.goal > 0
+    ? Math.round((config.fundraising.current || 0) / config.fundraising.goal * 100)
+    : 0;
+
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
-        <StatCard icon={Users} label="Teams" value="5" sub="2 confirmed · 3 pending" />
-        <StatCard icon={DollarSign} label="Revenue" value="$325" sub="+ $175 donations" color="#22c55e" />
-        <StatCard icon={HandHelping} label="Volunteers" value="4" sub="1 approved · 3 pending" color={B.secondary} />
-        <StatCard icon={Thermometer} label="Fundraising" value="8%" sub="$1,250 / $15,000" color={B.primary} />
+        <StatCard icon={Users} label="Teams" value={String(regStats.total)} sub={`${regStats.confirmed} confirmed · ${regStats.pending} pending`} />
+        <StatCard icon={DollarSign} label="Revenue" value={`$${regStats.revenue.toLocaleString()}`} sub={`+ $${regStats.donations.toLocaleString()} donations`} color="#22c55e" />
+        <StatCard icon={HandHelping} label="Volunteers" value={String(volStats.total)} sub={`${volStats.approved} approved · ${volStats.pending} pending`} color={B.secondary} />
+        <StatCard icon={Thermometer} label="Fundraising" value={`${fundPct}%`} sub={`$${(config.fundraising.current || 0).toLocaleString()} / $${(config.fundraising.goal || 0).toLocaleString()}`} color={B.primary} />
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 20, borderBottom: "1px solid #ffffff10", paddingBottom: 2 }}>
         {tabs.map(t => (
@@ -351,6 +544,9 @@ function BuildContext() {
    PUBLISH — with ID Badge Preview
    ═══════════════════════════════════════════════════════════ */
 function PublishContext() {
+  const { config } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
   const [artifacts, setArtifacts] = useState(INIT_ARTIFACTS);
   const [showBadge, setShowBadge] = useState(false);
   const advance = (id) => {
@@ -410,7 +606,7 @@ function PublishContext() {
                   {/* Front */}
                   <div style={{ background: B.dark, padding: "12px 10px", textAlign: "center", height: 100, display: "flex", flexDirection: "column", justifyContent: "center" }}>
                     <div style={{ width: 24, height: 24, borderRadius: 6, background: B.primary + "30", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 6px" }}><Trophy size={12} color={B.primary} /></div>
-                    <p style={{ fontSize: 7, color: B.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>ETRC Bocce Classic</p>
+                    <p style={{ fontSize: 7, color: B.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>{EVENT.name || config.org.name}</p>
                     <p style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>{name}</p>
                     <p style={{ fontSize: 7, color: "#ffffffaa", marginTop: 1 }}>{team}</p>
                     <span style={{ fontSize: 6, fontWeight: 700, color: B.dark, background: role === "Captain" ? B.accent : B.secondary, padding: "1px 6px", borderRadius: 4, marginTop: 4, display: "inline-block" }}>{role.toUpperCase()}</span>
@@ -422,7 +618,7 @@ function PublishContext() {
                   {/* Back */}
                   <div style={{ background: "#f5f5f0", padding: "8px 10px", height: 100, display: "flex", flexDirection: "column", justifyContent: "center" }}>
                     <p style={{ fontSize: 7, fontWeight: 700, color: B.dark, marginBottom: 4, textTransform: "uppercase" }}>Event Info</p>
-                    <p style={{ fontSize: 6, color: "#333", lineHeight: 1.6 }}>📅 Aug 29, 2026<br />📍 ETRC Clubhouse<br />🕐 Until 18:00<br />📶 Wi-Fi: ETRC-Guest</p>
+                    <p style={{ fontSize: 6, color: "#333", lineHeight: 1.6 }}>📅 {EVENT.date || "TBD"}<br />📍 {EVENT.venue || "TBD"}<br />🕐 Until {EVENT.endTime || "TBD"}<br />📶 Wi-Fi: {config.org.name ? `${config.org.name}-Guest` : "Guest"}</p>
                     <div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 4 }}>
                       <p style={{ fontSize: 6, fontWeight: 700, color: "#333" }}>Emergency: 555-123-4567</p>
                       <p style={{ fontSize: 5, color: "#999", marginTop: 2 }}>First Aid: Main Pavilion</p>
@@ -446,6 +642,8 @@ function PublishContext() {
    GAME DAY — FORMAT SIMULATOR
    ═══════════════════════════════════════════════════════════ */
 function FormatSimulator() {
+  const { config } = useEvent();
+  const B = config.brand;
   const [teams, setTeams] = useState(24);
   const [format, setFormat] = useState("double_elim");
   const [areas, setAreas] = useState(6);
@@ -533,12 +731,22 @@ function FormatSimulator() {
    GAME DAY CONTEXT (FULL)
    ═══════════════════════════════════════════════════════════ */
 function GameDayContext() {
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  // Realtime data
+  const { teams: allTeams, checkedIn: checkedInTeams, loading: teamsLoading } = useRealtimeTeams(eventId);
+  const { matches: allMatches, live: liveMatches, completed: completedMatches } = useRealtimeMatches(eventId);
+  const { data: areas, loading: areasLoading } = useRealtimeAreas(eventId);
+
+  // Local UI state
   const [tab, setTab] = useState("overview");
   const [clockRunning, setClockRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const intervalRef = useRef(null);
-  const [checkedIn, setCheckedIn] = useState({});
-  const [noShows, setNoShows] = useState({});
+  const [actionError, setActionError] = useState(null);
+  const [announcementText, setAnnouncementText] = useState("");
+  const [sendingAnnouncement, setSendingAnnouncement] = useState(false);
 
   useEffect(() => {
     if (clockRunning) {
@@ -549,6 +757,12 @@ function GameDayContext() {
     return () => clearInterval(intervalRef.current);
   }, [clockRunning]);
 
+  useEffect(() => {
+    if (!actionError) return;
+    const timer = setTimeout(() => setActionError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [actionError]);
+
   const formatTime = (s) => {
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
@@ -556,9 +770,122 @@ function GameDayContext() {
     return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   };
 
-  const confirmed = INIT_REGS.filter(r => r.status === "confirmed");
-  const checkIn = (id) => setCheckedIn(p => ({ ...p, [id]: true }));
-  const markNoShow = (id) => setNoShows(p => ({ ...p, [id]: true }));
+  const handleCheckIn = async (teamId) => {
+    setActionError(null);
+    try {
+      await teamsApi.checkIn(teamId);
+    } catch (err) {
+      console.error("Check-in failed:", err);
+      setActionError("Check-in failed. Please try again.");
+    }
+  };
+
+  const handleNoShow = async (teamId) => {
+    setActionError(null);
+    try {
+      const teamMatch = allMatches.find(m =>
+        ["scheduled", "ready"].includes(m.status) &&
+        (m.team_a_id === teamId || m.team_b_id === teamId)
+      );
+      if (teamMatch) {
+        const winnerId = teamMatch.team_a_id === teamId ? teamMatch.team_b_id : teamMatch.team_a_id;
+        const loserId = teamId;
+        await matchesApi.awardBye(teamMatch.id, winnerId, loserId);
+      }
+    } catch (err) {
+      console.error("No-show failed:", err);
+      setActionError("Failed to process no-show. Please try again.");
+    }
+  };
+
+  const handleGenerateBracket = async () => {
+    setActionError(null);
+    try {
+      // TODO: Full bracket generation — seed teams, create matches
+      await bracketsApi.create(eventId, "Main Bracket", "single_elimination", config.tournament.format);
+    } catch (err) {
+      console.error("Generate bracket failed:", err);
+      setActionError("Failed to generate bracket.");
+    }
+  };
+
+  const handleAssignAreas = async () => {
+    setActionError(null);
+    // TODO: Auto-assign matches to available playing areas
+    setActionError("Auto-assign not yet implemented. Use the match list to assign individually.");
+  };
+
+  const handleReassignCaptain = async () => {
+    setActionError(null);
+    // TODO: needs match selection UI. For now, stub with message.
+    setActionError("Select a specific match to reassign home captain.");
+  };
+
+  const handleForceVerify = async () => {
+    setActionError(null);
+    const pendingVerify = allMatches.find(m => m.status === "score_entered");
+    if (!pendingVerify) {
+      setActionError("No matches awaiting verification.");
+      return;
+    }
+    try {
+      await matchesApi.forceVerify(pendingVerify.id);
+    } catch (err) {
+      console.error("Force verify failed:", err);
+      setActionError("Failed to force verify.");
+    }
+  };
+
+  const handleAwardBye = async () => {
+    setActionError(null);
+    const byeMatch = allMatches.find(m => ["scheduled", "ready"].includes(m.status) && (!m.team_a_id || !m.team_b_id));
+    if (!byeMatch) {
+      setActionError("No matches with a missing opponent to award a bye.");
+      return;
+    }
+    try {
+      const winnerId = byeMatch.team_a_id || byeMatch.team_b_id;
+      const loserId = byeMatch.team_a_id ? byeMatch.team_b_id : byeMatch.team_a_id;
+      await matchesApi.awardBye(byeMatch.id, winnerId, loserId);
+    } catch (err) {
+      console.error("Award bye failed:", err);
+      setActionError("Failed to award bye.");
+    }
+  };
+
+  const handleResolveDispute = async () => {
+    setActionError(null);
+    const disputed = allMatches.find(m => m.status === "disputed");
+    if (!disputed) {
+      setActionError("No disputed matches.");
+      return;
+    }
+    try {
+      await matchesApi.resolveDispute(disputed.id, disputed.team_a_score, disputed.team_b_score);
+    } catch (err) {
+      console.error("Resolve dispute failed:", err);
+      setActionError("Failed to resolve dispute.");
+    }
+  };
+
+  const handleSendAnnouncement = async () => {
+    if (!announcementText.trim()) return;
+    setSendingAnnouncement(true);
+    setActionError(null);
+    try {
+      await announcementsApi.create(eventId, announcementText.trim(), {
+        priority: "normal",
+        showOnTV: true,
+        // createdBy: adminUserId, // TODO: add when auth layer exists
+      });
+      setAnnouncementText("");
+    } catch (err) {
+      console.error("Send announcement failed:", err);
+      setActionError("Failed to send announcement.");
+    } finally {
+      setSendingAnnouncement(false);
+    }
+  };
 
   const tabs = [
     { id: "overview", label: "Overview", icon: LayoutGrid },
@@ -603,33 +930,42 @@ function GameDayContext() {
       {tab === "overview" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
-            <StatCard icon={UserCheck} label="Checked In" value={`${Object.keys(checkedIn).length}/${confirmed.length}`} sub="teams arrived" color="#22c55e" />
-            <StatCard icon={CircleDot} label="Areas" value="6" sub="all available" color={B.accent} />
-            <StatCard icon={Trophy} label="Matches" value="0" sub="not started" color={B.primary} />
-            <StatCard icon={Ban} label="No-Shows" value={Object.keys(noShows).length} sub={Object.keys(noShows).length > 0 ? "byes awarded" : "none"} color="#6b7280" />
+            <StatCard icon={UserCheck} label="Checked In" value={`${checkedInTeams.length}/${allTeams.length}`} sub="teams arrived" color="#22c55e" />
+            <StatCard icon={CircleDot} label="Areas" value={String((areas || []).length)} sub={`${(areas || []).filter(a => a.status === "available").length} available`} color={B.accent} />
+            <StatCard icon={Trophy} label="Matches" value={String(completedMatches.length)} sub={`${liveMatches.length} live`} color={B.primary} />
+            <StatCard icon={Ban} label="No-Shows" value={String(allTeams.filter(t => t.eliminated).length)} sub={allTeams.some(t => t.eliminated) ? "byes awarded" : "none"} color="#6b7280" />
           </div>
+
+          {actionError && (
+            <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: 10, background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", fontSize: 13, fontWeight: 600 }}>
+              {actionError}
+            </div>
+          )}
 
           {/* Check-in */}
           <div style={{ ...S.card, marginBottom: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><UserCheck size={16} color={B.accent} /> Team Check-In</h3>
             <div style={{ display: "grid", gap: 8 }}>
-              {confirmed.map(r => (
-                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: checkedIn[r.id] ? "#22c55e08" : noShows[r.id] ? "#ef444408" : "#ffffff04", borderRadius: 10, border: `1px solid ${checkedIn[r.id] ? "#22c55e20" : noShows[r.id] ? "#ef444420" : "#ffffff08"}` }}>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{r.teamName}</p>
-                    <p style={{ fontSize: 12, color: "#ffffff50" }}>{r.captain} · {r.phone}</p>
+              {allTeams.map(t => {
+                const captain = t.players?.find(p => p.is_captain);
+                return (
+                  <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: t.checked_in ? "#22c55e08" : t.eliminated ? "#ef444408" : "#ffffff04", borderRadius: 10, border: `1px solid ${t.checked_in ? "#22c55e20" : t.eliminated ? "#ef444420" : "#ffffff08"}` }}>
+                    <div>
+                      <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{t.name}</p>
+                      <p style={{ fontSize: 12, color: "#ffffff50" }}>{captain?.full_name || ""} · {captain?.phone || ""}</p>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {!t.checked_in && !t.eliminated && <>
+                        <button onClick={() => handleCheckIn(t.id)} style={S.btn("#22c55e")}><Check size={14} /> Check In</button>
+                        <button onClick={() => handleNoShow(t.id)} style={S.btnSm("#ef444420", "#ef4444")} title="No-show — award bye to opponent"><Ban size={14} /> No-Show</button>
+                      </>}
+                      {t.checked_in && <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Checked In</span>}
+                      {t.eliminated && <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><Ban size={14} /> No-Show (bye awarded)</span>}
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {!checkedIn[r.id] && !noShows[r.id] && <>
-                      <button onClick={() => checkIn(r.id)} style={S.btn("#22c55e")}><Check size={14} /> Check In</button>
-                      <button onClick={() => markNoShow(r.id)} style={S.btnSm("#ef444420", "#ef4444")} title="No-show — award bye to opponent"><Ban size={14} /> No-Show</button>
-                    </>}
-                    {checkedIn[r.id] && <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Checked In</span>}
-                    {noShows[r.id] && <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><Ban size={14} /> No-Show (bye awarded)</span>}
-                  </div>
-                </div>
-              ))}
-              {confirmed.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40", textAlign: "center", padding: 20 }}>No confirmed teams yet — confirm payments in Build first</p>}
+                );
+              })}
+              {allTeams.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40", textAlign: "center", padding: 20 }}>No confirmed teams yet — confirm payments in Build first</p>}
             </div>
           </div>
 
@@ -637,12 +973,31 @@ function GameDayContext() {
           <div style={{ ...S.card, marginBottom: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><CircleDot size={16} color={B.accent} /> Playing Areas</h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-              {[1, 2, 3, 4, 5, 6].map(n => (
-                <div key={n} style={{ padding: 16, borderRadius: 12, border: "1px solid #ffffff10", background: "#ffffff04", textAlign: "center" }}>
-                  <p style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>Court {n}</p>
-                  <p style={{ fontSize: 12, color: "#22c55e", fontWeight: 600, marginTop: 4 }}>Available</p>
-                </div>
-              ))}
+              {(areas || []).map(area => {
+                const matchOnArea = allMatches.find(m =>
+                  m.playing_area_id === area.id &&
+                  ["live", "score_entered", "disputed"].includes(m.status)
+                );
+                const statusLabel = matchOnArea ? "Live" : area.status === "maintenance" ? "Maintenance" : "Available";
+                const statusColor = matchOnArea ? "#22c55e" : area.status === "maintenance" ? "#ef4444" : "#22c55e";
+
+                return (
+                  <div key={area.id} style={{ padding: 16, borderRadius: 12, border: "1px solid #ffffff10", background: "#ffffff04", textAlign: "center" }}>
+                    <p style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>{area.name || `${config.event.areaLabel || "Court"} ${area.number}`}</p>
+                    <p style={{ fontSize: 12, color: statusColor, fontWeight: 600, marginTop: 4 }}>{statusLabel}</p>
+                    {matchOnArea && (
+                      <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 2 }}>
+                        {matchOnArea.team_a?.name || "?"} vs {matchOnArea.team_b?.name || "?"}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              {(!areas || areas.length === 0) && (
+                <p style={{ fontSize: 13, color: "#ffffff40", textAlign: "center", padding: 20, gridColumn: "1 / -1" }}>
+                  No playing areas configured. Create them in the Wizard.
+                </p>
+              )}
             </div>
           </div>
 
@@ -650,12 +1005,12 @@ function GameDayContext() {
           <div style={{ ...S.card, marginBottom: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Zap size={16} color={B.accent} /> Match Engine</h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><Shuffle size={14} /> Generate Bracket</button>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><ArrowUpDown size={14} /> Assign Areas</button>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><RefreshCw size={14} /> Reassign Home Captain</button>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><CheckCircle size={14} /> Force Verify Score</button>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><SkipForward size={14} /> Award Bye</button>
-              <button style={S.btn("#ffffff10", "#ffffffaa")}><AlertCircle size={14} /> Resolve Dispute</button>
+              <button onClick={handleGenerateBracket} style={S.btn("#ffffff10", "#ffffffaa")}><Shuffle size={14} /> Generate Bracket</button>
+              <button onClick={handleAssignAreas} style={S.btn("#ffffff10", "#ffffffaa")}><ArrowUpDown size={14} /> Assign Areas</button>
+              <button onClick={handleReassignCaptain} style={S.btn("#ffffff10", "#ffffffaa")}><RefreshCw size={14} /> Reassign Home Captain</button>
+              <button onClick={handleForceVerify} style={S.btn("#ffffff10", "#ffffffaa")}><CheckCircle size={14} /> Force Verify Score</button>
+              <button onClick={handleAwardBye} style={S.btn("#ffffff10", "#ffffffaa")}><SkipForward size={14} /> Award Bye</button>
+              <button onClick={handleResolveDispute} style={S.btn("#ffffff10", "#ffffffaa")}><AlertCircle size={14} /> Resolve Dispute</button>
             </div>
           </div>
 
@@ -663,8 +1018,8 @@ function GameDayContext() {
           <div style={S.card}>
             <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Bell size={16} color={B.accent} /> Announcements</h3>
             <div style={{ display: "flex", gap: 10 }}>
-              <input style={{ ...S.input, flex: 1 }} placeholder="PA / TV ticker announcement..." />
-              <button style={S.btn(B.accent, B.dark)}><Send size={14} /> Send</button>
+              <input style={{ ...S.input, flex: 1 }} placeholder="PA / TV ticker announcement..." value={announcementText} onChange={e => setAnnouncementText(e.target.value)} />
+              <button onClick={handleSendAnnouncement} disabled={sendingAnnouncement || !announcementText.trim()} style={S.btn(B.accent, B.dark)}><Send size={14} /> {sendingAnnouncement ? "Sending..." : "Send"}</button>
             </div>
           </div>
         </div>
@@ -677,6 +1032,8 @@ function GameDayContext() {
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
 export default function AdminDashboard() {
+  const { config } = useEvent();
+  const B = config.brand;
   const [ctx, setCtx] = useState("build");
   const ctxs = [
     { id: "build", label: "Build", icon: Settings },
