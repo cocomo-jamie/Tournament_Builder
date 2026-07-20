@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Trophy, Users, MapPin, Clock, Zap, Star, Search,
   CircleDot, Award, ChevronRight, ChevronDown, Heart,
@@ -8,82 +8,14 @@ import {
   Camera, Gift, Flame, Crown, PartyPopper, Sparkles,
   ThumbsUp, Share2, ImagePlus
 } from "lucide-react";
+import { useEvent } from "../context/EventContext";
+import { useRealtimeMatches, useRealtimeStandings, useRealtimeTeams, useRealtimeAnnouncements, useRealtimeAreas } from "../hooks/useRealtime";
+import { brackets as bracketsApi } from "../services/api";
 
 /* ═══════════════════════════════════════════════════════════
-   CONFIG
+   FAN ENGAGEMENT — TODO: needs DB tables for fan_follows,
+   fan_donations, sponsor_quizzes, photo_contest_entries
    ═══════════════════════════════════════════════════════════ */
-const B = { primary: "#C1121F", secondary: "#1B4D3E", accent: "#D4A843", dark: "#020e4b", light: "#F4F1EA" };
-const EVENT = { name: "ETRC Bocce Classic", tagline: "Fighting Elder Fraud", date: "Saturday, August 29, 2026", venue: "ETRC Clubhouse", address: "55 Clubhouse Road" };
-
-/* ═══════════════════════════════════════════════════════════
-   MOCK DATA
-   ═══════════════════════════════════════════════════════════ */
-const TEAMS = [
-  { id: 1, name: "Pallino Pushers", slogan: "Born to throw", captain: "Jane Smith", w: 4, l: 1, pf: 62, pa: 38, pool: "A", rank: 1, eliminated: false, checkedIn: true },
-  { id: 2, name: "Bocce Ballers", slogan: "Roll with it", captain: "Tom Wilson", w: 2, l: 3, pf: 41, pa: 50, pool: "A", rank: 3, eliminated: false, checkedIn: true },
-  { id: 3, name: "Court Jesters", slogan: "", captain: "Amy Park", w: 3, l: 2, pf: 52, pa: 44, pool: "A", rank: 2, eliminated: false, checkedIn: true },
-  { id: 4, name: "Rolling Stones", slogan: "Can't stop us", captain: "Chris Dao", w: 5, l: 0, pf: 70, pa: 25, pool: "B", rank: 1, eliminated: false, checkedIn: true },
-  { id: 5, name: "Lawn & Order", slogan: "Justice is served", captain: "Pat Riley", w: 3, l: 2, pf: 48, pa: 40, pool: "B", rank: 2, eliminated: false, checkedIn: true },
-  { id: 6, name: "Ball Busters", slogan: "Bust or bust", captain: "Sam Lee", w: 1, l: 4, pf: 30, pa: 55, pool: "B", rank: 4, eliminated: true, checkedIn: true },
-  { id: 7, name: "The Underdogs", slogan: "Never count us out", captain: "Alex Kim", w: 2, l: 3, pf: 38, pa: 47, pool: "A", rank: 4, eliminated: true, checkedIn: true },
-  { id: 8, name: "Pin Droppers", slogan: "", captain: "Jo Chen", w: 1, l: 4, pf: 25, pa: 58, pool: "B", rank: 3, eliminated: true, checkedIn: true },
-  { id: 9, name: "Gutter Queens", slogan: "Royally rolling", captain: "Mel Davis", w: 3, l: 1, pf: 50, pa: 36, pool: "C", rank: 1, eliminated: false, checkedIn: true },
-  { id: 10, name: "Roll Models", slogan: "Setting the standard", captain: "Ray Park", w: 2, l: 2, pf: 40, pa: 42, pool: "C", rank: 2, eliminated: false, checkedIn: true },
-];
-
-const COURTS = [
-  { num: 1, status: "live", a: "Pallino Pushers", b: "Rolling Stones", sa: 11, sb: 8, round: "SF", time: "2:15 PM", updated: true },
-  { num: 2, status: "live", a: "Court Jesters", b: "Lawn & Order", sa: 7, sb: 9, round: "SF", time: "2:15 PM", updated: false },
-  { num: 3, status: "completed", a: "Gutter Queens", b: "Bocce Ballers", sa: 15, sb: 10, round: "QF", time: "1:30 PM" },
-  { num: 4, status: "completed", a: "Roll Models", b: "The Underdogs", sa: 8, sb: 15, round: "QF", time: "1:30 PM" },
-  { num: 5, status: "available", a: null, b: null },
-  { num: 6, status: "available", a: null, b: null },
-];
-
-const SCHEDULE = [
-  { id: 1, time: "9:00 AM", round: "Pool A-1", a: "Pallino Pushers", b: "Court Jesters", sa: 15, sb: 9, court: 1, status: "completed" },
-  { id: 2, time: "9:00 AM", round: "Pool A-2", a: "The Underdogs", b: "Bocce Ballers", sa: 11, sb: 15, court: 2, status: "completed" },
-  { id: 3, time: "9:30 AM", round: "Pool B-1", a: "Rolling Stones", b: "Lawn & Order", sa: 15, sb: 7, court: 3, status: "completed" },
-  { id: 4, time: "9:30 AM", round: "Pool B-2", a: "Ball Busters", b: "Pin Droppers", sa: 12, sb: 15, court: 4, status: "completed" },
-  { id: 5, time: "10:00 AM", round: "Pool A-3", a: "Pallino Pushers", b: "Bocce Ballers", sa: 15, sb: 6, court: 1, status: "completed" },
-  { id: 6, time: "10:00 AM", round: "Pool B-3", a: "Rolling Stones", b: "Pin Droppers", sa: 15, sb: 2, court: 2, status: "completed" },
-  { id: 7, time: "10:30 AM", round: "Pool A-4", a: "Court Jesters", b: "The Underdogs", sa: 15, sb: 11, court: 3, status: "completed" },
-  { id: 8, time: "10:30 AM", round: "Pool B-4", a: "Lawn & Order", b: "Ball Busters", sa: 15, sb: 8, court: 4, status: "completed" },
-  { id: 9, time: "1:00 PM", round: "QF-1", a: "Pallino Pushers", b: "Bocce Ballers", sa: 15, sb: 9, court: 1, status: "completed" },
-  { id: 10, time: "1:00 PM", round: "QF-2", a: "Rolling Stones", b: "Court Jesters", sa: 15, sb: 12, court: 2, status: "completed" },
-  { id: 11, time: "1:30 PM", round: "QF-3", a: "Gutter Queens", b: "Bocce Ballers", sa: 15, sb: 10, court: 3, status: "completed" },
-  { id: 12, time: "1:30 PM", round: "QF-4", a: "Roll Models", b: "The Underdogs", sa: 8, sb: 15, court: 4, status: "completed" },
-  { id: 13, time: "2:15 PM", round: "SF-1", a: "Pallino Pushers", b: "Rolling Stones", sa: 11, sb: 8, court: 1, status: "live" },
-  { id: 14, time: "2:15 PM", round: "SF-2", a: "Court Jesters", b: "Lawn & Order", sa: 7, sb: 9, court: 2, status: "live" },
-  { id: 15, time: "3:30 PM", round: "Final", a: "TBD", b: "TBD", sa: null, sb: null, court: 1, status: "upcoming" },
-];
-
-const ANNOUNCEMENTS = [
-  { id: 1, time: "2:20 PM", msg: "Semi-finals underway on Courts 1 & 2!", priority: "high" },
-  { id: 2, time: "2:00 PM", msg: "BBQ is OPEN — grab your tokens at the front desk!", priority: "normal" },
-  { id: 3, time: "1:45 PM", msg: "Team photos at the pavilion during the break — don't miss it!", priority: "normal" },
-  { id: 4, time: "1:30 PM", msg: "We've raised $4,250 so far — thank you for fighting elder fraud!", priority: "high" },
-  { id: 5, time: "1:00 PM", msg: "Quarter-finals starting now. Check your court assignments!", priority: "high" },
-  { id: 6, time: "12:00 PM", msg: "Lunch break! Pool play complete. Bracket posted.", priority: "normal" },
-  { id: 7, time: "9:00 AM", msg: "Welcome to the ETRC Bocce Classic! Pool play begins now.", priority: "high" },
-];
-
-const POOLS = [
-  { name: "Pool A", teams: [
-    { name: "Pallino Pushers", w: 3, l: 0, pf: 45, pa: 22, pts: 9 },
-    { name: "Court Jesters", w: 2, l: 1, pf: 38, pa: 30, pts: 6 },
-    { name: "Bocce Ballers", w: 1, l: 2, pf: 30, pa: 33, pts: 3 },
-    { name: "The Underdogs", w: 0, l: 3, pf: 22, pa: 45, pts: 0 },
-  ]},
-  { name: "Pool B", teams: [
-    { name: "Rolling Stones", w: 3, l: 0, pf: 45, pa: 17, pts: 9 },
-    { name: "Lawn & Order", w: 2, l: 1, pf: 35, pa: 28, pts: 6 },
-    { name: "Pin Droppers", w: 1, l: 2, pf: 29, pa: 38, pts: 3 },
-    { name: "Ball Busters", w: 0, l: 3, pf: 20, pa: 46, pts: 0 },
-  ]},
-];
-
-/* Fan engagement data */
 const FAN_COUNTS = {
   "Pallino Pushers": 24, "Rolling Stones": 19, "Court Jesters": 15, "Lawn & Order": 12,
   "Bocce Ballers": 11, "Gutter Queens": 10, "The Underdogs": 8, "Roll Models": 7,
@@ -109,17 +41,6 @@ const PHOTO_ENTRIES = [
 /* ═══════════════════════════════════════════════════════════
    STYLES
    ═══════════════════════════════════════════════════════════ */
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
-* { box-sizing: border-box; margin: 0; padding: 0; }
-.fd { font-family: 'Playfair Display', Georgia, serif; }
-.fb { font-family: 'Inter', system-ui, sans-serif; }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
-@keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-.pulse { animation: pulse 1.2s ease-in-out infinite; }
-.slide-up { animation: slideUp .3s ease-out; }
-`;
-
 const card = { background: "#ffffff06", border: "1px solid #ffffff10", borderRadius: 14, padding: 16 };
 const badge = (c) => ({ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 12, background: c + "18", color: c, textTransform: "uppercase", letterSpacing: 0.5 });
 
@@ -127,6 +48,9 @@ const badge = (c) => ({ display: "inline-flex", alignItems: "center", gap: 4, fo
    HEADER
    ═══════════════════════════════════════════════════════════ */
 function Header({ onSearch }) {
+  const { config } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
   return (
     <header style={{ background: `${B.dark}ee`, backdropFilter: "blur(12px)", borderBottom: "1px solid #ffffff10", padding: "12px 16px", position: "sticky", top: 0, zIndex: 50 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -150,7 +74,9 @@ function Header({ onSearch }) {
 /* ═══════════════════════════════════════════════════════════
    SEARCH OVERLAY
    ═══════════════════════════════════════════════════════════ */
-function SearchOverlay({ onClose, onTeamSelect }) {
+function SearchOverlay({ teams: TEAMS, onClose, onTeamSelect }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [q, setQ] = useState("");
   const results = useMemo(() => {
     if (!q.trim()) return [];
@@ -198,7 +124,9 @@ function SearchOverlay({ onClose, onTeamSelect }) {
 /* ═══════════════════════════════════════════════════════════
    TEAM PROFILE SHEET
    ═══════════════════════════════════════════════════════════ */
-function TeamSheet({ team, onClose }) {
+function TeamSheet({ team, schedule: SCHEDULE, teams: TEAMS, onClose }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const matches = SCHEDULE.filter(m => m.a === team.name || m.b === team.name);
   const nextMatch = matches.find(m => m.status === "live" || m.status === "upcoming");
 
@@ -293,7 +221,9 @@ function TeamSheet({ team, onClose }) {
 /* ═══════════════════════════════════════════════════════════
    TAB: COURTS
    ═══════════════════════════════════════════════════════════ */
-function CourtsTab({ onTeamSelect }) {
+function CourtsTab({ courts: COURTS, teams: TEAMS, onTeamSelect }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div style={{ display: "grid", gap: 10 }}>
       {COURTS.map(c => (
@@ -329,7 +259,9 @@ function CourtsTab({ onTeamSelect }) {
 /* ═══════════════════════════════════════════════════════════
    TAB: STANDINGS
    ═══════════════════════════════════════════════════════════ */
-function StandingsTab({ onTeamSelect }) {
+function StandingsTab({ pools: POOLS, teams: TEAMS, onTeamSelect }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div style={{ display: "grid", gap: 16 }}>
       {POOLS.map((pool, pi) => (
@@ -359,12 +291,21 @@ function StandingsTab({ onTeamSelect }) {
 /* ═══════════════════════════════════════════════════════════
    TAB: BRACKET
    ═══════════════════════════════════════════════════════════ */
-function BracketTab({ onTeamSelect }) {
-  const rounds = [
-    { label: "Quarter-Finals", matches: SCHEDULE.filter(m => m.round.startsWith("QF")) },
-    { label: "Semi-Finals", matches: SCHEDULE.filter(m => m.round.startsWith("SF")) },
-    { label: "Final", matches: SCHEDULE.filter(m => m.round === "Final") },
-  ];
+function BracketTab({ schedule: SCHEDULE, teams: TEAMS, onTeamSelect }) {
+  const { config } = useEvent();
+  const B = config.brand;
+  // TODO: derive display labels (QF/SF/Final) from bracket.total_rounds
+  const rounds = useMemo(() => {
+    const bracketMatches = SCHEDULE.filter(m => m.bracketId != null);
+    const roundMap = {};
+    bracketMatches.forEach(m => {
+      if (!roundMap[m.round]) roundMap[m.round] = [];
+      roundMap[m.round].push(m);
+    });
+    return Object.keys(roundMap)
+      .sort((a, b) => Number(a) - Number(b))
+      .map(round => ({ label: `Round ${round}`, matches: roundMap[round] }));
+  }, [SCHEDULE]);
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
@@ -407,7 +348,9 @@ function BracketTab({ onTeamSelect }) {
 /* ═══════════════════════════════════════════════════════════
    TAB: SCHEDULE
    ═══════════════════════════════════════════════════════════ */
-function ScheduleTab({ onTeamSelect }) {
+function ScheduleTab({ schedule: SCHEDULE, teams: TEAMS, onTeamSelect }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const grouped = useMemo(() => {
     const map = {};
     SCHEDULE.forEach(m => {
@@ -415,7 +358,7 @@ function ScheduleTab({ onTeamSelect }) {
       map[m.time].push(m);
     });
     return Object.entries(map);
-  }, []);
+  }, [SCHEDULE]);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -462,7 +405,9 @@ function ScheduleTab({ onTeamSelect }) {
 /* ═══════════════════════════════════════════════════════════
    TAB: FEED (Announcements + Fundraising)
    ═══════════════════════════════════════════════════════════ */
-function FeedTab() {
+function FeedTab({ announcements: ANNOUNCEMENTS }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const raised = 4250;
   const goal = 15000;
   const pct = Math.min(100, (raised / goal) * 100);
@@ -506,7 +451,9 @@ function FeedTab() {
 /* ═══════════════════════════════════════════════════════════
    TEAM PICKER (shown on first visit)
    ═══════════════════════════════════════════════════════════ */
-function TeamPicker({ onPick }) {
+function TeamPicker({ teams: TEAMS, onPick }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const randomPick = () => {
     const idx = Math.floor(Math.random() * TEAMS.length);
     onPick(TEAMS[idx]);
@@ -572,6 +519,8 @@ function TeamPicker({ onPick }) {
    FAN ZONE TAB
    ═══════════════════════════════════════════════════════════ */
 function FanZoneTab({ myTeam, onChangeTeam }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [quizStep, setQuizStep] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState([]);
   const [quizDone, setQuizDone] = useState(false);
@@ -787,6 +736,141 @@ function FanZoneTab({ myTeam, onChangeTeam }) {
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
 export default function LivePage() {
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
+
+  const CSS = useMemo(() => `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.fd { font-family: 'Playfair Display', Georgia, serif; }
+.fb { font-family: 'Inter', system-ui, sans-serif; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+@keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+.pulse { animation: pulse 1.2s ease-in-out infinite; }
+.slide-up { animation: slideUp .3s ease-out; }
+`, [B.accent, B.dark, B.primary]);
+
+  // ── Realtime data ──
+  const { teams: rawTeams } = useRealtimeTeams(eventId);
+  const { matches: rawMatches } = useRealtimeMatches(eventId);
+  const { pools: rawPools } = useRealtimeStandings(eventId);
+  const { data: rawAreas } = useRealtimeAreas(eventId);
+  const { data: rawAnnouncements } = useRealtimeAnnouncements(eventId);
+  const [rawBrackets, setRawBrackets] = useState([]);
+
+  useEffect(() => {
+    if (eventId) {
+      bracketsApi.listWithMatches(eventId).then(setRawBrackets).catch(() => setRawBrackets([]));
+    }
+  }, [eventId]);
+
+  // ── Adapter: TEAMS ──
+  // Mock shape: { id, name, slogan, captain, w, l, pf, pa, pool, rank, eliminated, checkedIn }
+  const TEAMS = useMemo(() => {
+    const standingsMap = {};
+    rawPools.forEach(p => {
+      (p.pool_standings || []).forEach(s => {
+        standingsMap[s.team_id || s.team?.id] = { ...s, poolName: p.name };
+      });
+    });
+
+    return rawTeams.map(t => {
+      const s = standingsMap[t.id] || {};
+      const captain = (t.players || []).find(p => p.is_captain);
+      return {
+        id: t.id,
+        name: t.name,
+        slogan: t.slogan || "",
+        captain: captain?.full_name || "",
+        w: s.won || 0,
+        l: s.lost || 0,
+        pf: s.points_for || 0,
+        pa: s.points_against || 0,
+        pool: s.poolName || t.pool?.name || "",
+        rank: s.pool_rank || 0,
+        eliminated: t.eliminated || false,
+        checkedIn: t.checked_in || false,
+      };
+    });
+  }, [rawTeams, rawPools]);
+
+  // ── Adapter: COURTS (playing areas merged with their current matches) ──
+  // Mock shape: { num, status, a, b, sa, sb, round, updated }
+  const COURTS = useMemo(() => {
+    const areaMatchMap = {};
+    rawMatches.forEach(m => {
+      if (m.playing_area?.number != null && ["live", "score_entered", "disputed", "ready", "scheduled"].includes(m.status)) {
+        const existing = areaMatchMap[m.playing_area.number];
+        if (!existing || ["live", "score_entered", "disputed"].includes(m.status)) {
+          areaMatchMap[m.playing_area.number] = m;
+        }
+      }
+    });
+
+    return rawAreas.map(area => {
+      const m = areaMatchMap[area.number];
+      const isLive = m && ["live", "score_entered", "disputed"].includes(m.status);
+      const isUpcoming = m && ["scheduled", "ready"].includes(m.status);
+      return {
+        num: area.number,
+        status: isLive ? "live" : isUpcoming ? "upcoming" : m?.status === "completed" ? "completed" : "available",
+        a: m?.team_a?.name || null,
+        b: m?.team_b?.name || null,
+        sa: m?.team_a_score ?? null,
+        sb: m?.team_b_score ?? null,
+        round: m?.round || "",
+        updated: false, // No flash animation tracking from DB currently
+      };
+    });
+  }, [rawAreas, rawMatches]);
+
+  // ── Adapter: SCHEDULE (all matches) ──
+  // Mock shape: { id, time, round, court, a, b, sa, sb, status, bracketId }
+  const SCHEDULE = useMemo(() => {
+    return rawMatches.map(m => ({
+      id: m.id,
+      time: m.scheduled_time || "",
+      round: m.round || "",
+      court: m.playing_area?.number || 0,
+      a: m.team_a?.name || "TBD",
+      b: m.team_b?.name || "TBD",
+      sa: m.team_a_score ?? null,
+      sb: m.team_b_score ?? null,
+      status: ["live", "score_entered", "disputed"].includes(m.status) ? "live"
+            : m.status === "completed" ? "completed"
+            : "upcoming",
+      bracketId: m.bracket_id || null,
+    }));
+  }, [rawMatches]);
+
+  // ── Adapter: POOLS ──
+  // Mock shape: { name, teams: [{ name, w, l, pf, pa, pts }] }
+  const POOLS = useMemo(() => {
+    return rawPools.map(p => ({
+      name: p.name,
+      teams: (p.pool_standings || []).map(s => ({
+        name: s.team?.name || "",
+        w: s.won || 0,
+        l: s.lost || 0,
+        pf: s.points_for || 0,
+        pa: s.points_against || 0,
+        pts: s.ranking_points || 0,
+      })),
+    }));
+  }, [rawPools]);
+
+  // ── Adapter: ANNOUNCEMENTS ──
+  // Mock shape: { id, time, msg, priority }
+  const ANNOUNCEMENTS = useMemo(() => {
+    return (rawAnnouncements || []).map(a => ({
+      id: a.id,
+      time: a.created_at ? new Date(a.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "",
+      msg: a.message || "",
+      priority: a.priority || "normal",
+    }));
+  }, [rawAnnouncements]);
+
   const [tab, setTab] = useState("courts");
   const [showSearch, setShowSearch] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -799,7 +883,7 @@ export default function LivePage() {
   };
 
   const tabs = [
-    { id: "courts", label: "Courts", icon: CircleDot },
+    { id: "courts", label: EVENT.areaLabel || "Courts", icon: CircleDot },
     { id: "standings", label: "Standings", icon: BarChart3 },
     { id: "bracket", label: "Bracket", icon: Trophy },
     { id: "schedule", label: "Schedule", icon: Calendar },
@@ -815,7 +899,7 @@ export default function LivePage() {
     <div style={{ minHeight: "100vh", background: B.dark, color: "#fff", fontFamily: "'Inter', system-ui, sans-serif", paddingBottom: 70 }}>
       <style>{CSS}</style>
 
-      {showPicker && <TeamPicker onPick={handlePickTeam} />}
+      {showPicker && <TeamPicker teams={TEAMS} onPick={handlePickTeam} />}
 
       <Header onSearch={() => setShowSearch(true)} />
 
@@ -846,10 +930,10 @@ export default function LivePage() {
 
       {/* Tab Content */}
       <div style={{ padding: 16 }}>
-        {tab === "courts" && <CourtsTab onTeamSelect={setSelectedTeam} />}
-        {tab === "standings" && <StandingsTab onTeamSelect={setSelectedTeam} />}
-        {tab === "bracket" && <BracketTab onTeamSelect={setSelectedTeam} />}
-        {tab === "schedule" && <ScheduleTab onTeamSelect={setSelectedTeam} />}
+        {tab === "courts" && <CourtsTab courts={COURTS} teams={TEAMS} onTeamSelect={setSelectedTeam} />}
+        {tab === "standings" && <StandingsTab pools={POOLS} teams={TEAMS} onTeamSelect={setSelectedTeam} />}
+        {tab === "bracket" && <BracketTab schedule={SCHEDULE} teams={TEAMS} onTeamSelect={setSelectedTeam} />}
+        {tab === "schedule" && <ScheduleTab schedule={SCHEDULE} teams={TEAMS} onTeamSelect={setSelectedTeam} />}
         {tab === "fans" && myTeam && <FanZoneTab myTeam={myTeam} onChangeTeam={() => setShowPicker(true)} />}
       </div>
 
@@ -874,8 +958,8 @@ export default function LivePage() {
       </nav>
 
       {/* Overlays */}
-      {showSearch && <SearchOverlay onClose={() => setShowSearch(false)} onTeamSelect={setSelectedTeam} />}
-      {selectedTeam && <TeamSheet team={selectedTeam} onClose={() => setSelectedTeam(null)} />}
+      {showSearch && <SearchOverlay teams={TEAMS} onClose={() => setShowSearch(false)} onTeamSelect={setSelectedTeam} />}
+      {selectedTeam && <TeamSheet team={selectedTeam} schedule={SCHEDULE} teams={TEAMS} onClose={() => setSelectedTeam(null)} />}
     </div>
   );
 }

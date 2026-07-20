@@ -5,7 +5,7 @@
 // page, admin game day panel, and captain portal.
 // ─────────────────────────────────────────────────────────
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../supabaseClient";
 
 // ═══════════════════════════════════════════════════════════
@@ -16,6 +16,10 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const { filter, orderBy, ascending = true } = options;
+
+  // Unique per-instance ID so concurrent hook calls for the same
+  // table+eventId don't collide on the same Supabase channel object.
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   // Initial fetch
   useEffect(() => {
@@ -36,7 +40,7 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
     if (!eventId) return;
 
     const channel = supabase
-      .channel(`${table}_${eventId}`)
+      .channel(`${table}_${eventId}_${instanceId}`)
       .on(
         "postgres_changes",
         {
@@ -100,6 +104,7 @@ export function useRealtimeMatches(eventId) {
 export function useRealtimeStandings(eventId) {
   const [pools, setPools] = useState([]);
   const [loading, setLoading] = useState(true);
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   useEffect(() => {
     async function fetch() {
@@ -128,7 +133,7 @@ export function useRealtimeStandings(eventId) {
   useEffect(() => {
     if (!eventId) return;
     const channel = supabase
-      .channel(`standings_${eventId}`)
+      .channel(`standings_${eventId}_${instanceId}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "pool_standings", filter: `event_id=eq.${eventId}` },
@@ -218,6 +223,7 @@ export function useRealtimeQueue(eventId) {
 export function useWatchMatch(matchId) {
   const [match, setMatch] = useState(null);
   const [loading, setLoading] = useState(true);
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   useEffect(() => {
     async function fetch() {
@@ -238,7 +244,7 @@ export function useWatchMatch(matchId) {
   useEffect(() => {
     if (!matchId) return;
     const channel = supabase
-      .channel(`match_${matchId}`)
+      .channel(`match_${matchId}_${instanceId}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "matches", filter: `id=eq.${matchId}` },

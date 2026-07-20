@@ -4,117 +4,19 @@ import {
   CircleDot, Award, BarChart3, ChevronRight,
   Heart, Timer, Bell, ArrowRight, Shield
 } from "lucide-react";
+import { useEvent } from "../context/EventContext";
+import { useRealtimeMatches, useRealtimeStandings, useRealtimeAreas, useRealtimeAnnouncements } from "../hooks/useRealtime";
+import { sponsors as sponsorsApi, brackets as bracketsApi } from "../services/api";
 
-/* ═══════════════════════════════════════════════════════════
-   CONFIG & BRAND
-   ═══════════════════════════════════════════════════════════ */
-const B = { primary: "#C1121F", secondary: "#1B4D3E", accent: "#D4A843", dark: "#020e4b", light: "#F4F1EA" };
-const EVENT = { name: "ETRC Bocce Classic", tagline: "Fighting Elder Fraud", date: "Aug 29, 2026", venue: "ETRC Clubhouse" };
 const CYCLE_MS = 15000;
-
-/* ═══════════════════════════════════════════════════════════
-   MOCK DATA
-   ═══════════════════════════════════════════════════════════ */
-const COURTS = [
-  { num: 1, status: "live", teamA: "Pallino Pushers", teamB: "Court Jesters", scoreA: 11, scoreB: 8, round: "R1", updated: true },
-  { num: 2, status: "live", teamA: "Rolling Stones", teamB: "Lawn & Order", scoreA: 7, scoreB: 7, round: "R1", updated: false },
-  { num: 3, status: "live", teamA: "Bocce Ballers", teamB: "Ball Busters", scoreA: 13, scoreB: 10, round: "R1", updated: true },
-  { num: 4, status: "live", teamA: "The Underdogs", teamB: "Pin Droppers", scoreA: 5, scoreB: 9, round: "R1", updated: false },
-  { num: 5, status: "upcoming", teamA: "Gutter Queens", teamB: "Roll Models", scoreA: null, scoreB: null, round: "R2" },
-  { num: 6, status: "available", teamA: null, teamB: null, scoreA: null, scoreB: null },
-];
-
-const POOLS = [
-  { name: "Pool A", teams: [
-    { name: "Pallino Pushers", w: 3, l: 0, pf: 45, pa: 22, pts: 9 },
-    { name: "Court Jesters", w: 2, l: 1, pf: 38, pa: 30, pts: 6 },
-    { name: "The Underdogs", w: 1, l: 2, pf: 28, pa: 35, pts: 3 },
-    { name: "Pin Droppers", w: 0, l: 3, pf: 18, pa: 42, pts: 0 },
-  ]},
-  { name: "Pool B", teams: [
-    { name: "Rolling Stones", w: 3, l: 0, pf: 42, pa: 20, pts: 9 },
-    { name: "Lawn & Order", w: 2, l: 1, pf: 35, pa: 28, pts: 6 },
-    { name: "Bocce Ballers", w: 1, l: 2, pf: 30, pa: 33, pts: 3 },
-    { name: "Ball Busters", w: 0, l: 3, pf: 15, pa: 41, pts: 0 },
-  ]},
-];
-
-const BRACKET = [
-  { round: "Quarter-Finals", matches: [
-    { a: "Pallino Pushers", b: "Bocce Ballers", sa: 15, sb: 9, done: true },
-    { a: "Rolling Stones", b: "Court Jesters", sa: 15, sb: 12, done: true },
-    { a: "Lawn & Order", b: "The Underdogs", sa: 11, sb: 15, done: true },
-    { a: "Gutter Queens", b: "Roll Models", sa: null, sb: null, done: false },
-  ]},
-  { round: "Semi-Finals", matches: [
-    { a: "Pallino Pushers", b: "Rolling Stones", sa: null, sb: null, done: false },
-    { a: "The Underdogs", b: "TBD", sa: null, sb: null, done: false },
-  ]},
-  { round: "Final", matches: [
-    { a: "TBD", b: "TBD", sa: null, sb: null, done: false },
-  ]},
-];
-
-const STATS = [
-  { label: "Total Points Scored", value: "487", icon: Zap },
-  { label: "Matches Completed", value: "18", icon: Trophy },
-  { label: "Closest Match", value: "15-14", sub: "Pallino Pushers vs Lawn & Order", icon: Star },
-  { label: "Highest Score", value: "15-2", sub: "Rolling Stones vs Pin Droppers", icon: Award },
-  { label: "Teams Remaining", value: "8", icon: Users },
-  { label: "Fundraised Today", value: "$4,250", icon: Heart },
-];
-
-const ANNOUNCEMENTS = [
-  "🏆 Quarter-finals underway! Check the bracket for your next match.",
-  "🍔 BBQ is OPEN — grab your tokens at the front desk!",
-  "📸 Team photos at Court 1 during halftime — don't miss it!",
-  "❤️ We've raised $4,250 so far — thank you for fighting elder fraud!",
-  "⏰ Semi-finals begin at approximately 2:30 PM",
-];
-
-/* ═══════════════════════════════════════════════════════════
-   STYLES
-   ═══════════════════════════════════════════════════════════ */
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { overflow: hidden; }
-
-@keyframes scoreFlash {
-  0%, 100% { background: transparent; }
-  50% { background: ${B.accent}25; }
-}
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes ticker {
-  0% { transform: translateX(100%); }
-  100% { transform: translateX(-100%); }
-}
-@keyframes pulseDot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-@keyframes fadeSwitch {
-  0% { opacity: 0; transform: scale(0.98); }
-  8% { opacity: 1; transform: scale(1); }
-  92% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.98); }
-}
-
-.slide-in { animation: slideIn 0.5s ease-out forwards; }
-.score-flash { animation: scoreFlash 1.5s ease-in-out 3; }
-.tv-fade { animation: fadeSwitch ${CYCLE_MS}ms ease-in-out; }
-.pulse-dot { animation: pulseDot 1.2s ease-in-out infinite; }
-.fd { font-family: 'Playfair Display', Georgia, serif; }
-.fb { font-family: 'Inter', system-ui, sans-serif; }
-`;
 
 /* ═══════════════════════════════════════════════════════════
    HEADER BAR (persistent)
    ═══════════════════════════════════════════════════════════ */
 function TVHeader({ elapsed, viewLabel }) {
+  const { config } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
   const [now, setNow] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
   const fmt = (s) => `${Math.floor(s / 3600).toString().padStart(2, "0")}:${Math.floor((s % 3600) / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
@@ -154,7 +56,9 @@ function TVHeader({ elapsed, viewLabel }) {
 /* ═══════════════════════════════════════════════════════════
    TICKER BAR (persistent bottom)
    ═══════════════════════════════════════════════════════════ */
-function Ticker() {
+function Ticker({ announcements: ANNOUNCEMENTS }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const text = ANNOUNCEMENTS.join("     ★     ");
   return (
     <div style={{ background: "#00000060", borderTop: `2px solid ${B.accent}30`, padding: "10px 0", overflow: "hidden", whiteSpace: "nowrap" }}>
@@ -168,7 +72,9 @@ function Ticker() {
 /* ═══════════════════════════════════════════════════════════
    VIEW 1: COURTS STATUS GRID
    ═══════════════════════════════════════════════════════════ */
-function CourtsView() {
+function CourtsView({ courts: COURTS }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div className="slide-in" style={{ padding: "24px 32px", height: "100%" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, height: "100%" }}>
@@ -222,7 +128,9 @@ function CourtsView() {
 /* ═══════════════════════════════════════════════════════════
    VIEW 2: POOL STANDINGS
    ═══════════════════════════════════════════════════════════ */
-function StandingsView() {
+function StandingsView({ pools: POOLS }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div className="slide-in" style={{ padding: "24px 32px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -270,7 +178,9 @@ function StandingsView() {
 /* ═══════════════════════════════════════════════════════════
    VIEW 3: BRACKET
    ═══════════════════════════════════════════════════════════ */
-function BracketView() {
+function BracketView({ bracket: BRACKET }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div className="slide-in" style={{ padding: "24px 32px" }}>
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start", justifyContent: "center", height: "100%" }}>
@@ -313,7 +223,9 @@ function BracketView() {
 /* ═══════════════════════════════════════════════════════════
    VIEW 4: TOURNAMENT STATS
    ═══════════════════════════════════════════════════════════ */
-function StatsView() {
+function StatsView({ stats: STATS }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div className="slide-in" style={{ padding: "24px 32px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
@@ -336,6 +248,8 @@ function StatsView() {
    PROGRESS DOTS
    ═══════════════════════════════════════════════════════════ */
 function ProgressDots({ current, total, progress, isSponsor }) {
+  const { config } = useEvent();
+  const B = config.brand;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)" }}>
       {Array.from({ length: total }, (_, i) => {
@@ -356,29 +270,14 @@ function ProgressDots({ current, total, progress, isSponsor }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SPONSOR DATA (from admin/wizard config)
-   ═══════════════════════════════════════════════════════════ */
-const SPONSORS = {
-  gold: { name: "Tall Tree Health", tier: "Gold", tagline: "Rooted in community wellness", logoUrl: "", website: "talltreehealth.ca", color: B.accent },
-  silver: [
-    { name: "Island Savings", tier: "Silver", tagline: "Banking on our community", logoUrl: "", color: "#94a3b8" },
-    { name: "Victoria Plumbing", tier: "Silver", tagline: "Your local experts since 1985", logoUrl: "", color: "#94a3b8" },
-  ],
-  bronze: [
-    { name: "Beacon Law Group", tier: "Bronze", tagline: "Protecting what matters", logoUrl: "" },
-    { name: "Oceanside Physio", tier: "Bronze", tagline: "Move better, feel better", logoUrl: "" },
-  ],
-  community: [
-    { name: "Christie's Pub", tier: "Community", tagline: "Great food, great times", logoUrl: "" },
-    { name: "Fairfield Bikes", tier: "Community", tagline: "Ride local", logoUrl: "" },
-  ],
-};
-
-/* ═══════════════════════════════════════════════════════════
    VIEW: GOLD SPONSOR (15s - premium placement)
    ═══════════════════════════════════════════════════════════ */
-function GoldSponsorView() {
+function GoldSponsorView({ sponsors: SPONSORS }) {
+  const { config } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
   const s = SPONSORS.gold;
+  if (!s) return null; // No gold sponsor configured
   return (
     <div className="slide-in" style={{ padding: "32px", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ textAlign: "center", maxWidth: 700 }}>
@@ -442,48 +341,260 @@ function SponsorSlide({ sponsors, tierLabel, tierColor }) {
   );
 }
 
-function SilverSponsorView() { return <SponsorSlide sponsors={SPONSORS.silver} tierLabel="Silver" tierColor="#94a3b8" />; }
-function BronzeSponsorView() { return <SponsorSlide sponsors={SPONSORS.bronze} tierLabel="Bronze" tierColor="#cd7f32" />; }
-function CommunitySponsorView() { return <SponsorSlide sponsors={SPONSORS.community} tierLabel="Community" tierColor={B.secondary} />; }
+function SilverSponsorView({ sponsors: SPONSORS }) { return <SponsorSlide sponsors={SPONSORS.silver} tierLabel="Silver" tierColor="#94a3b8" />; }
+function BronzeSponsorView({ sponsors: SPONSORS }) { return <SponsorSlide sponsors={SPONSORS.bronze} tierLabel="Bronze" tierColor="#cd7f32" />; }
+function CommunitySponsorView({ sponsors: SPONSORS }) {
+  const { config } = useEvent();
+  const B = config.brand;
+  return <SponsorSlide sponsors={SPONSORS.community} tierLabel="Community" tierColor={B.secondary} />;
+}
 
 /* ═══════════════════════════════════════════════════════════
    MAIN TV DISPLAY
    ═══════════════════════════════════════════════════════════ */
 export default function TVDisplay() {
-  // Views with variable durations (ms)
-  const views = [
-    { id: "gold_sponsor", label: "Gold Sponsor", component: GoldSponsorView, duration: 15000 },
-    { id: "courts", label: "Live Courts", component: CourtsView, duration: 15000 },
-    { id: "silver_sponsor", label: "Silver Sponsors", component: SilverSponsorView, duration: 5000 },
-    { id: "standings", label: "Pool Standings", component: StandingsView, duration: 15000 },
-    { id: "bronze_sponsor", label: "Bronze Sponsors", component: BronzeSponsorView, duration: 5000 },
-    { id: "bracket", label: "Championship Bracket", component: BracketView, duration: 15000 },
-    { id: "community_sponsor", label: "Community Sponsors", component: CommunitySponsorView, duration: 5000 },
-    { id: "stats", label: "Tournament Stats", component: StatsView, duration: 15000 },
-  ];
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
+  const CSS = useMemo(() => `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { overflow: hidden; }
+
+@keyframes scoreFlash {
+  0%, 100% { background: transparent; }
+  50% { background: ${B.accent}25; }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ticker {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes fadeSwitch {
+  0% { opacity: 0; transform: scale(0.98); }
+  8% { opacity: 1; transform: scale(1); }
+  92% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.98); }
+}
+
+.slide-in { animation: slideIn 0.5s ease-out forwards; }
+.score-flash { animation: scoreFlash 1.5s ease-in-out 3; }
+.tv-fade { animation: fadeSwitch ${CYCLE_MS}ms ease-in-out; }
+.pulse-dot { animation: pulseDot 1.2s ease-in-out infinite; }
+.fd { font-family: 'Playfair Display', Georgia, serif; }
+.fb { font-family: 'Inter', system-ui, sans-serif; }
+`, [B.accent, B.dark, B.primary, B.secondary]);
+
+  // ── Realtime data ──
+  const { matches: rawMatches } = useRealtimeMatches(eventId);
+  const { pools: rawPools } = useRealtimeStandings(eventId);
+  const { data: rawAreas } = useRealtimeAreas(eventId);
+  const { data: rawAnnouncements } = useRealtimeAnnouncements(eventId);
+
+  // ── Sponsors (not realtime — fetched once) ──
+  const [sponsorTiers, setSponsorTiers] = useState([]);
+  useEffect(() => {
+    if (eventId) {
+      sponsorsApi.listTiers(eventId).then(setSponsorTiers).catch(() => setSponsorTiers([]));
+    }
+  }, [eventId]);
+
+  // ── Brackets (not realtime — fetched once) ──
+  const [rawBrackets, setRawBrackets] = useState([]);
+  useEffect(() => {
+    if (eventId) {
+      bracketsApi.listWithMatches(eventId).then(setRawBrackets).catch(() => setRawBrackets([]));
+    }
+  }, [eventId]);
+
+  // ── Adapter: COURTS ──
+  const COURTS = useMemo(() => {
+    const areaMatchMap = {};
+    rawMatches.forEach(m => {
+      if (m.playing_area?.number != null && ["live", "score_entered", "disputed", "ready", "scheduled"].includes(m.status)) {
+        const existing = areaMatchMap[m.playing_area.number];
+        if (!existing || ["live", "score_entered", "disputed"].includes(m.status)) {
+          areaMatchMap[m.playing_area.number] = m;
+        }
+      }
+    });
+    return rawAreas.map(area => {
+      const m = areaMatchMap[area.number];
+      const isLive = m && ["live", "score_entered", "disputed"].includes(m.status);
+      const isUpcoming = m && ["scheduled", "ready"].includes(m.status);
+      return {
+        num: area.number,
+        status: isLive ? "live" : isUpcoming ? "upcoming" : "available",
+        teamA: m?.team_a?.name || null,
+        teamB: m?.team_b?.name || null,
+        scoreA: m?.team_a_score ?? null,
+        scoreB: m?.team_b_score ?? null,
+        round: m?.round || "",
+        updated: false,
+      };
+    });
+  }, [rawAreas, rawMatches]);
+
+  // ── Adapter: POOLS ──
+  const POOLS = useMemo(() => {
+    return rawPools.map(p => ({
+      name: p.name,
+      teams: (p.pool_standings || []).map(s => ({
+        name: s.team?.name || "",
+        w: s.won || 0,
+        l: s.lost || 0,
+        pf: s.points_for || 0,
+        pa: s.points_against || 0,
+        pts: s.ranking_points || 0,
+      })),
+    }));
+  }, [rawPools]);
+
+  // ── Adapter: BRACKET ──
+  // TODO: derive display labels (QF/SF/Final) from bracket.total_rounds
+  const BRACKET = useMemo(() => {
+    const bracketMatches = rawMatches.filter(m => m.bracket_id);
+    const roundMap = {};
+    bracketMatches.forEach(m => {
+      const roundName = `Round ${m.round || "?"}`;
+      if (!roundMap[roundName]) roundMap[roundName] = [];
+      roundMap[roundName].push({
+        a: m.team_a?.name || "TBD",
+        b: m.team_b?.name || "TBD",
+        sa: m.team_a_score ?? null,
+        sb: m.team_b_score ?? null,
+        done: m.status === "completed",
+      });
+    });
+    return Object.entries(roundMap).map(([round, matches]) => ({ round, matches }));
+  }, [rawMatches]);
+
+  // ── Adapter: ANNOUNCEMENTS (for ticker) ──
+  const ANNOUNCEMENTS = useMemo(() => {
+    return (rawAnnouncements || [])
+      .filter(a => a.show_on_tv !== false)
+      .map(a => a.message || "");
+  }, [rawAnnouncements]);
+
+  // ── Adapter: SPONSORS (grouped by tier) ──
+  const SPONSORS = useMemo(() => {
+    const result = { gold: null, silver: [], bronze: [], community: [] };
+    sponsorTiers.forEach(tier => {
+      const tierSponsors = (tier.sponsors || []).map(s => ({
+        name: s.name,
+        tier: tier.name,
+        tagline: s.notes || "",
+        logoUrl: s.logo_url || "",
+        website: s.website || "",
+        color: tier.name === "Gold" ? B.accent
+             : tier.name === "Silver" ? "#94a3b8"
+             : tier.name === "Bronze" ? "#cd7f32"
+             : B.secondary,
+      }));
+      const key = tier.name.toLowerCase();
+      if (key === "gold") {
+        result.gold = tierSponsors[0] || null;
+      } else if (result[key]) {
+        result[key] = tierSponsors;
+      } else {
+        // Unknown tier name — put in community
+        result.community.push(...tierSponsors);
+      }
+    });
+    return result;
+  }, [sponsorTiers, B.accent, B.secondary]);
+
+  // ── Adapter: STATS (derived from live data) ──
+  const STATS = useMemo(() => {
+    const completedMatches = rawMatches.filter(m => m.status === "completed");
+    const totalPoints = completedMatches.reduce((sum, m) => sum + (m.team_a_score || 0) + (m.team_b_score || 0), 0);
+    const teamsRemaining = rawMatches.some(m => m.bracket_id)
+      ? new Set(rawMatches.filter(m => m.bracket_id && m.status !== "completed").flatMap(m => [m.team_a_id, m.team_b_id].filter(Boolean))).size
+      : "—";
+
+    // Find closest match
+    let closest = null;
+    let closestDiff = Infinity;
+    completedMatches.forEach(m => {
+      const diff = Math.abs((m.team_a_score || 0) - (m.team_b_score || 0));
+      if (diff < closestDiff && diff > 0) {
+        closestDiff = diff;
+        closest = m;
+      }
+    });
+
+    // Find highest winning score
+    let highest = null;
+    let highestScore = 0;
+    completedMatches.forEach(m => {
+      const maxScore = Math.max(m.team_a_score || 0, m.team_b_score || 0);
+      if (maxScore > highestScore) {
+        highestScore = maxScore;
+        highest = m;
+      }
+    });
+
+    const fundraised = config.fundraising?.current || 0;
+
+    return [
+      { label: "Total Points Scored", value: String(totalPoints), icon: Zap },
+      { label: "Matches Completed", value: String(completedMatches.length), icon: Trophy },
+      { label: "Closest Match", value: closest ? `${closest.team_a_score}-${closest.team_b_score}` : "—", sub: closest ? `${closest.team_a?.name || "?"} vs ${closest.team_b?.name || "?"}` : "", icon: Star },
+      { label: "Highest Score", value: highest ? `${highest.team_a_score}-${highest.team_b_score}` : "—", sub: highest ? `${highest.team_a?.name || "?"} vs ${highest.team_b?.name || "?"}` : "", icon: Award },
+      { label: "Teams Remaining", value: String(teamsRemaining), icon: Users },
+      { label: "Fundraised Today", value: `$${fundraised.toLocaleString()}`, icon: Heart },
+    ];
+  }, [rawMatches, config.fundraising?.current]);
+
+  // Views with variable durations (ms) — skip slides with no data
+  const views = useMemo(() => {
+    const allViews = [
+      SPONSORS.gold && { id: "gold_sponsor", label: "Gold Sponsor", component: GoldSponsorView, duration: 15000, props: { sponsors: SPONSORS } },
+      { id: "courts", label: "Live Courts", component: CourtsView, duration: 15000, props: { courts: COURTS } },
+      SPONSORS.silver.length > 0 && { id: "silver_sponsor", label: "Silver Sponsors", component: SilverSponsorView, duration: 5000, props: { sponsors: SPONSORS } },
+      { id: "standings", label: "Pool Standings", component: StandingsView, duration: 15000, props: { pools: POOLS } },
+      SPONSORS.bronze.length > 0 && { id: "bronze_sponsor", label: "Bronze Sponsors", component: BronzeSponsorView, duration: 5000, props: { sponsors: SPONSORS } },
+      BRACKET.length > 0 && { id: "bracket", label: "Championship Bracket", component: BracketView, duration: 15000, props: { bracket: BRACKET } },
+      SPONSORS.community.length > 0 && { id: "community_sponsor", label: "Community Sponsors", component: CommunitySponsorView, duration: 5000, props: { sponsors: SPONSORS } },
+      { id: "stats", label: "Tournament Stats", component: StatsView, duration: 15000, props: { stats: STATS } },
+    ].filter(Boolean);
+    return allViews;
+  }, [SPONSORS, BRACKET, COURTS, POOLS, STATS]);
 
   const [currentView, setCurrentView] = useState(0);
   const [elapsed, setElapsed] = useState(4823);
   const [progress, setProgress] = useState(0);
 
+  // Keep currentView in range if the views list shrinks (e.g. sponsors change)
+  useEffect(() => {
+    if (currentView >= views.length) setCurrentView(0);
+  }, [views.length, currentView]);
+
   // Auto-cycle with variable durations
   useEffect(() => {
-    const dur = views[currentView].duration;
+    const dur = views[currentView]?.duration || CYCLE_MS;
     const timeout = setTimeout(() => {
       setCurrentView(v => (v + 1) % views.length);
       setProgress(0);
     }, dur);
     return () => clearTimeout(timeout);
-  }, [currentView]);
+  }, [currentView, views.length]);
 
   // Progress bar for current slide
   useEffect(() => {
-    const dur = views[currentView].duration;
+    const dur = views[currentView]?.duration || CYCLE_MS;
     const tick = setInterval(() => {
       setProgress(p => Math.min(100, p + (100 / (dur / 100))));
     }, 100);
     return () => clearInterval(tick);
-  }, [currentView]);
+  }, [currentView, views.length]);
 
   // Tournament clock
   useEffect(() => {
@@ -491,21 +602,22 @@ export default function TVDisplay() {
     return () => clearInterval(i);
   }, []);
 
-  const CurrentComponent = views[currentView].component;
-  const isSponsor = views[currentView].id.includes("sponsor");
+  const activeView = views[currentView];
+  const CurrentComponent = activeView?.component;
+  const isSponsor = activeView?.id.includes("sponsor");
 
   return (
     <div style={{ width: "100vw", height: "100vh", background: `linear-gradient(170deg, ${B.dark} 0%, #010830 50%, ${B.dark} 100%)`, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "'Inter', system-ui, sans-serif", position: "relative" }}>
       <style>{CSS}</style>
 
-      <TVHeader elapsed={elapsed} viewLabel={views[currentView].label} />
+      <TVHeader elapsed={elapsed} viewLabel={activeView?.label || ""} />
 
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }} key={currentView}>
-        <CurrentComponent />
+        {CurrentComponent && <CurrentComponent {...activeView.props} />}
       </div>
 
       <ProgressDots current={currentView} total={views.length} progress={progress} isSponsor={isSponsor} />
-      <Ticker />
+      <Ticker announcements={ANNOUNCEMENTS} />
     </div>
   );
 }
