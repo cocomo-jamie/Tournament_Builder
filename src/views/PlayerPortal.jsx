@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   Trophy, Users, Phone, Shield, Check, X, Clock,
   ChevronRight, ArrowRight, AlertCircle, CircleDot,
@@ -6,57 +6,13 @@ import {
   LogOut, Award, Target, Lock, Send, Timer,
   MessageSquare, RefreshCw, Shirt, Flag
 } from "lucide-react";
-
-/* ═══════════════════════════════════════════════════════════
-   CONFIG
-   ═══════════════════════════════════════════════════════════ */
-const B = { primary: "#C1121F", secondary: "#1B4D3E", accent: "#D4A843", dark: "#020e4b", light: "#F4F1EA" };
-const EVENT = { name: "ETRC Bocce Classic", date: "August 29, 2026" };
-
-/* ═══════════════════════════════════════════════════════════
-   MOCK DATA
-   ═══════════════════════════════════════════════════════════ */
-const MOCK_CAPTAIN = {
-  name: "Jane Smith", phone: "+1 250-555-0101", teamId: 1,
-  team: { name: "Pallino Pushers", slogan: "Born to throw", pool: "A", seed: 1, checkedIn: true },
-  roster: [
-    { name: "Jane Smith", role: "Captain", shirt: "M", dietary: "None" },
-    { name: "Mike Chen", role: "Player", shirt: "L", dietary: "Vegetarian" },
-  ],
-};
-
-const MOCK_MATCHES = [
-  { id: 1, round: "Pool A-1", time: "9:00 AM", court: 1, opponent: "Court Jesters", myScore: 15, theirScore: 9, status: "completed", wasHome: true, verified: true },
-  { id: 2, round: "Pool A-3", time: "10:00 AM", court: 1, opponent: "Bocce Ballers", myScore: 15, theirScore: 6, status: "completed", wasHome: false, verified: true },
-  { id: 3, round: "Pool A-5", time: "11:00 AM", court: 3, opponent: "The Underdogs", myScore: 15, theirScore: 11, status: "completed", wasHome: true, verified: true },
-  { id: 4, round: "QF-1", time: "1:00 PM", court: 1, opponent: "Bocce Ballers", myScore: 15, theirScore: 9, status: "completed", wasHome: false, verified: true },
-  { id: 5, round: "SF-1", time: "2:15 PM", court: 1, opponent: "Rolling Stones", myScore: null, theirScore: null, status: "live", wasHome: true, verified: false },
-];
-
-const ACTIVE_MATCH = {
-  id: 5, round: "Semi-Final 1", time: "2:15 PM", court: 1,
-  teamA: "Pallino Pushers", teamB: "Rolling Stones",
-  homeCaptainTeam: "Pallino Pushers",
-  status: "live",
-};
+import { useEvent } from "../context/EventContext";
+import { otp, matches as matchesApi } from "../services/api";
+import { useWatchMatch, useRealtimeMatches } from "../hooks/useRealtime";
 
 /* ═══════════════════════════════════════════════════════════
    STYLES
    ═══════════════════════════════════════════════════════════ */
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
-* { box-sizing: border-box; margin: 0; padding: 0; }
-.fd { font-family: 'Playfair Display', Georgia, serif; }
-.fb { font-family: 'Inter', system-ui, sans-serif; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
-@keyframes shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-6px); } 75% { transform:translateX(6px); } }
-.fade-in { animation: fadeIn .4s ease-out; }
-.pulse { animation: pulse 1.2s ease-in-out infinite; }
-.shake { animation: shake .3s ease-in-out; }
-input:focus { outline: none; border-color: ${B.accent}88 !important; box-shadow: 0 0 0 3px ${B.accent}22; }
-`;
-
 const card = { background: "#ffffff06", border: "1px solid #ffffff10", borderRadius: 16, padding: 20 };
 const badgeStyle = (c) => ({ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 12, background: c + "18", color: c, textTransform: "uppercase", letterSpacing: 0.5 });
 const btn = (bg, c = "#fff") => ({ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: bg, color: c, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 });
@@ -64,7 +20,9 @@ const btn = (bg, c = "#fff") => ({ width: "100%", padding: "14px 20px", borderRa
 /* ═══════════════════════════════════════════════════════════
    SCREEN 1: PHONE ENTRY
    ═══════════════════════════════════════════════════════════ */
-function PhoneEntry({ onSubmit }) {
+function PhoneEntry({ onSubmit, otpError }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [phone, setPhone] = useState("");
   const valid = phone.replace(/\D/g, "").length >= 10;
 
@@ -89,6 +47,7 @@ function PhoneEntry({ onSubmit }) {
           style={{ ...btn(valid ? B.accent : "#ffffff15", valid ? B.dark : "#ffffff30") }}>
           <Send size={16} /> Send Verification Code
         </button>
+        {otpError && <p className="fb" style={{ fontSize: 12, color: "#ef4444", marginTop: 12 }}>{otpError}</p>}
         <p className="fb" style={{ fontSize: 11, color: "#ffffff30", marginTop: 16 }}>
           Standard SMS rates may apply. Code expires in 5 minutes.
         </p>
@@ -100,11 +59,48 @@ function PhoneEntry({ onSubmit }) {
 /* ═══════════════════════════════════════════════════════════
    SCREEN 2: OTP VERIFICATION
    ═══════════════════════════════════════════════════════════ */
-function OTPVerify({ phone, onVerified, onBack }) {
+function OTPVerify({ phone, sessionId, onVerified, onBack }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [error, setError] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const refs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()];
+
+  const verifyCode = async (digits) => {
+    setVerifying(true);
+    setError(false);
+    try {
+      const session = await otp.verify(sessionId, digits);
+      const player = session.player || session;
+      onVerified({
+        name: player.full_name || player.name,
+        phone: phone,
+        teamId: player.team?.id || player.team_id,
+        team: {
+          name: player.team?.name || "",
+          slogan: player.team?.slogan || "",
+          pool: player.team?.pool?.name || "",
+          seed: player.team?.seed || 0,
+          checkedIn: player.team?.checked_in || false,
+        },
+        // NOTE: otp.verify()'s query (api.js) does not nest team.players,
+        // so this will be empty until that query is updated to fetch the roster.
+        roster: player.team?.players?.map(p => ({
+          name: p.full_name || p.name,
+          role: p.is_captain ? "Captain" : "Player",
+          shirt: p.shirt_size || "",
+          dietary: p.dietary_needs || "None",
+        })) || [],
+      });
+    } catch (err) {
+      setVerifying(false);
+      setError(true);
+      setCode(["", "", "", "", "", ""]);
+      refs[0].current?.focus();
+      console.error("OTP verify failed:", err);
+    }
+  };
 
   const handleDigit = (idx, val) => {
     if (val.length > 1) val = val.slice(-1);
@@ -115,11 +111,7 @@ function OTPVerify({ phone, onVerified, onBack }) {
     setError(false);
     if (val && idx < 5) refs[idx + 1].current?.focus();
     if (next.every(d => d !== "")) {
-      setVerifying(true);
-      setTimeout(() => {
-        setVerifying(false);
-        onVerified();
-      }, 1200);
+      verifyCode(next.join(""));
     }
   };
 
@@ -173,6 +165,8 @@ function OTPVerify({ phone, onVerified, onBack }) {
    SCORE ENTRY (Home Captain)
    ═══════════════════════════════════════════════════════════ */
 function ScoreEntry({ match, myTeam, onSubmit }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [myScore, setMyScore] = useState("");
   const [theirScore, setTheirScore] = useState("");
   const isTeamA = match.teamA === myTeam;
@@ -226,6 +220,8 @@ function ScoreEntry({ match, myTeam, onSubmit }) {
    SCORE VERIFICATION (Away Captain)
    ═══════════════════════════════════════════════════════════ */
 function ScoreVerify({ match, myTeam, scores, onVerify, onDispute }) {
+  const { config } = useEvent();
+  const B = config.brand;
   const [reason, setReason] = useState("");
   const [showDispute, setShowDispute] = useState(false);
   const isTeamA = match.teamA === myTeam;
@@ -281,23 +277,121 @@ function ScoreVerify({ match, myTeam, scores, onVerify, onDispute }) {
    CAPTAIN DASHBOARD
    ═══════════════════════════════════════════════════════════ */
 function CaptainDashboard({ captain, onLogout }) {
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+
   const [scoreState, setScoreState] = useState("entry"); // entry, submitted, verified, disputed
   const [submittedScores, setSubmittedScores] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
 
   const team = captain.team;
-  const activeMatch = ACTIVE_MATCH;
-  const isHome = activeMatch.homeCaptainTeam === team.name;
-  const matches = MOCK_MATCHES;
+
+  // Fetch all matches for this team via realtime
+  const { matches: allMatches } = useRealtimeMatches(eventId);
+
+  // Find matches involving this team, adapted to mock shape
+  const matches = useMemo(() => {
+    return allMatches
+      .filter(m => m.team_a?.name === team.name || m.team_b?.name === team.name)
+      .map(m => {
+        const isTeamA = m.team_a?.name === team.name;
+        return {
+          id: m.id,
+          round: m.round || "",
+          time: m.scheduled_time || "",
+          court: m.playing_area?.number || 0,
+          opponent: isTeamA ? (m.team_b?.name || "TBD") : (m.team_a?.name || "TBD"),
+          myScore: isTeamA ? m.team_a_score : m.team_b_score,
+          theirScore: isTeamA ? m.team_b_score : m.team_a_score,
+          status: ["live", "score_entered", "disputed"].includes(m.status) ? "live" : m.status,
+          wasHome: m.home_captain_team_id === (isTeamA ? m.team_a_id : m.team_b_id),
+          verified: m.score_verified || false,
+          _raw: m,
+        };
+      });
+  }, [allMatches, team.name]);
+
+  // Find active (live) match
+  const activeMatchRaw = allMatches.find(m =>
+    ["live", "score_entered", "disputed"].includes(m.status) &&
+    (m.team_a?.name === team.name || m.team_b?.name === team.name)
+  );
+
+  // Watch it for realtime updates (score submissions, verifications)
+  const { match: watchedMatch } = useWatchMatch(activeMatchRaw?.id);
+
+  // Merge watched data with the raw match (watched has latest updates)
+  const liveMatch = watchedMatch || activeMatchRaw;
+
+  // Adapt active match to the shape ScoreEntry/ScoreVerify expect
+  const activeMatch = liveMatch ? {
+    id: liveMatch.id,
+    round: liveMatch.round || "",
+    time: liveMatch.scheduled_time || "",
+    court: liveMatch.playing_area?.number || 0,
+    teamA: liveMatch.team_a?.name || "TBD",
+    teamB: liveMatch.team_b?.name || "TBD",
+    homeCaptainTeam: liveMatch.home_captain_team_id === liveMatch.team_a_id
+      ? liveMatch.team_a?.name
+      : liveMatch.team_b?.name,
+    status: liveMatch.status,
+  } : null;
+
+  const isHome = activeMatch?.homeCaptainTeam === team.name;
   const completed = matches.filter(m => m.status === "completed");
   const record = { w: completed.filter(m => m.myScore > m.theirScore).length, l: completed.filter(m => m.myScore < m.theirScore).length };
 
-  const handleScoreSubmit = (scores) => {
-    setSubmittedScores(scores);
-    setScoreState("submitted");
+  // React to realtime match status changes
+  useEffect(() => {
+    if (!liveMatch) return;
+    if (liveMatch.status === "completed" && liveMatch.score_verified) {
+      setScoreState("verified");
+    } else if (liveMatch.status === "disputed") {
+      setScoreState("disputed");
+    } else if (liveMatch.status === "score_entered" && !isHome) {
+      // Score was submitted by home captain — away captain should see verify UI
+      setSubmittedScores({
+        teamAScore: liveMatch.team_a_score,
+        teamBScore: liveMatch.team_b_score,
+      });
+    }
+  }, [liveMatch?.status, liveMatch?.score_verified]);
+
+  const handleScoreSubmit = async (scores) => {
+    setSubmitError(null);
+    try {
+      await matchesApi.submitScore(activeMatch.id, scores.teamAScore, scores.teamBScore, captain.phone);
+      setSubmittedScores(scores);
+      setScoreState("submitted");
+      // useWatchMatch will auto-update when the DB row changes
+    } catch (err) {
+      console.error("Score submit failed:", err);
+      setSubmitError("Failed to submit score. Please try again.");
+    }
   };
 
-  const handleVerify = () => setScoreState("verified");
-  const handleDispute = (reason) => setScoreState("disputed");
+  const handleVerify = async () => {
+    setSubmitError(null);
+    try {
+      await matchesApi.verifyScore(activeMatch.id);
+      setScoreState("verified");
+      // Realtime updates propagate to TV display, live page, standings
+    } catch (err) {
+      console.error("Verify failed:", err);
+      setSubmitError("Failed to verify score. Please try again.");
+    }
+  };
+
+  const handleDispute = async (reason) => {
+    setSubmitError(null);
+    try {
+      await matchesApi.disputeScore(activeMatch.id, reason);
+      setScoreState("disputed");
+    } catch (err) {
+      console.error("Dispute failed:", err);
+      setSubmitError("Failed to submit dispute. Please try again.");
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: B.dark, paddingBottom: 24 }}>
@@ -335,16 +429,31 @@ function CaptainDashboard({ captain, onLogout }) {
           ))}
         </div>
 
+        {/* No Active Match */}
+        {!activeMatch && (
+          <div style={{ ...card, textAlign: "center", padding: 24, marginBottom: 16 }}>
+            <Clock size={24} color={B.accent} style={{ marginBottom: 8 }} />
+            <p className="fb" style={{ fontSize: 14, fontWeight: 600, color: "#ffffffaa" }}>No active match right now</p>
+            <p className="fb" style={{ fontSize: 12, color: "#ffffff40", marginTop: 4 }}>Your next match will appear here when it goes live.</p>
+          </div>
+        )}
+
+        {submitError && (
+          <div style={{ ...card, background: "#ef444408", borderColor: "#ef444425", marginBottom: 16, textAlign: "center" }}>
+            <p className="fb" style={{ fontSize: 13, color: "#ef4444", fontWeight: 600 }}>{submitError}</p>
+          </div>
+        )}
+
         {/* Active Match — Score Entry or Verification */}
-        {activeMatch.status === "live" && scoreState === "entry" && isHome && (
+        {activeMatch && activeMatch.status === "live" && scoreState === "entry" && isHome && (
           <ScoreEntry match={activeMatch} myTeam={team.name} onSubmit={handleScoreSubmit} />
         )}
 
-        {activeMatch.status === "live" && scoreState === "entry" && !isHome && submittedScores && (
+        {activeMatch && activeMatch.status === "live" && scoreState === "entry" && !isHome && submittedScores && (
           <ScoreVerify match={activeMatch} myTeam={team.name} scores={submittedScores} onVerify={handleVerify} onDispute={handleDispute} />
         )}
 
-        {activeMatch.status === "live" && scoreState === "entry" && !isHome && !submittedScores && (
+        {activeMatch && activeMatch.status === "live" && scoreState === "entry" && !isHome && !submittedScores && (
           <div style={{ ...card, background: `${B.secondary}06`, borderColor: `${B.secondary}20`, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <div className="pulse" style={{ width: 8, height: 8, borderRadius: 4, background: "#22c55e" }} />
@@ -359,7 +468,7 @@ function CaptainDashboard({ captain, onLogout }) {
           </div>
         )}
 
-        {scoreState === "submitted" && (
+        {activeMatch && scoreState === "submitted" && (
           <div className="fade-in" style={{ ...card, background: `${B.accent}06`, borderColor: `${B.accent}25`, marginBottom: 16, textAlign: "center" }}>
             <Timer size={24} color={B.accent} style={{ marginBottom: 8 }} />
             <p className="fb" style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Score Submitted</p>
@@ -451,8 +560,29 @@ function CaptainDashboard({ captain, onLogout }) {
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
 export default function PlayerPortal() {
+  const { config, eventId } = useEvent();
+  const B = config.brand;
+  const EVENT = config.event;
+
+  const CSS = useMemo(() => `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.fd { font-family: 'Playfair Display', Georgia, serif; }
+.fb { font-family: 'Inter', system-ui, sans-serif; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+@keyframes shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-6px); } 75% { transform:translateX(6px); } }
+.fade-in { animation: fadeIn .4s ease-out; }
+.pulse { animation: pulse 1.2s ease-in-out infinite; }
+.shake { animation: shake .3s ease-in-out; }
+input:focus { outline: none; border-color: ${B.accent}88 !important; box-shadow: 0 0 0 3px ${B.accent}22; }
+`, [B.accent, B.secondary]);
+
   const [screen, setScreen] = useState("phone"); // phone, otp, dashboard
   const [phone, setPhone] = useState("");
+  const [sessionId, setSessionId] = useState(null);
+  const [captain, setCaptain] = useState(null);
+  const [otpError, setOtpError] = useState(null);
 
   return (
     <div style={{ minHeight: "100vh", background: B.dark, color: "#fff", fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -471,7 +601,22 @@ export default function PlayerPortal() {
               </div>
             </div>
           </header>
-          <PhoneEntry onSubmit={(p) => { setPhone(p); setScreen("otp"); }} />
+          <PhoneEntry
+            otpError={otpError}
+            onSubmit={async (p) => {
+              setPhone(p);
+              setOtpError(null);
+              try {
+                const result = await otp.request(eventId, p);
+                setSessionId(result.sessionId);
+                setScreen("otp");
+              } catch (err) {
+                // OTP serverless function not deployed yet — show error, don't crash
+                setOtpError("Unable to send verification code. Please try again later.");
+                console.error("OTP request failed:", err);
+              }
+            }}
+          />
         </>
       )}
 
@@ -485,12 +630,25 @@ export default function PlayerPortal() {
               <p className="fd" style={{ fontSize: 14, fontWeight: 900, color: "#fff" }}>{EVENT.name}</p>
             </div>
           </header>
-          <OTPVerify phone={phone} onVerified={() => setScreen("dashboard")} onBack={() => setScreen("phone")} />
+          <OTPVerify
+            phone={phone}
+            sessionId={sessionId}
+            onVerified={(captainData) => {
+              setCaptain(captainData);
+              setScreen("dashboard");
+            }}
+            onBack={() => { setScreen("phone"); setOtpError(null); }}
+          />
         </>
       )}
 
-      {screen === "dashboard" && (
-        <CaptainDashboard captain={MOCK_CAPTAIN} onLogout={() => setScreen("phone")} />
+      {screen === "dashboard" && captain && (
+        <CaptainDashboard captain={captain} onLogout={() => {
+          setScreen("phone");
+          setCaptain(null);
+          setSessionId(null);
+          setPhone("");
+        }} />
       )}
     </div>
   );

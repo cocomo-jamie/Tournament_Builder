@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import {
   Trophy, Users, MapPin, Heart, DollarSign, Calendar, Clock,
   Shield, AlertTriangle, Phone, Mail, Check, ArrowRight, Star,
@@ -6,84 +6,11 @@ import {
   Target, Lock, Globe, Gift, Camera, MessageSquare, ChevronDown,
   Thermometer, Image, HandHelping, Flag, X, AlertCircle
 } from "lucide-react";
-
-/* ═══════════════════════════════════════════════════════════
-   CONFIG (from wizard v2 export)
-   ═══════════════════════════════════════════════════════════ */
-const C = {
-  org: { name: "ETRC", fullName: "Ebb Tide Rugby Club", email: "info@etrc.com", phone: "+1 555 123 4567", website: "https://etrc.com" },
-  brand: { primary: "#C1121F", secondary: "#1B4D3E", accent: "#D4A843", dark: "#020e4b", light: "#F4F1EA" },
-  event: {
-    name: "ETRC Annual Bocce Classic",
-    sport: "Bocce",
-    tagline: "Playing with our balls to prevent elder fraud!",
-    date: "2026-08-29",
-    dateLabel: "Tournament Day",
-    endTime: "18:00",
-    venue: "ETRC Clubhouse",
-    address: "55 Clubhouse Road",
-    courts: 6,
-    description: "A fun day of Bocce for teams of all ages and skills! Knockout format with some amazing prizes and attendee gift baskets! All monies after event costs will be donated to charities engaged in the fight against Elder Fraud.",
-  },
-  cause: {
-    name: "Elder Fraud Prevention",
-    description: "Several of the Ebb Tide Rugby family have been hit by the scourge of this shameful activity — one member in particular is dealing with the implications of his mother's entire life savings being stolen by scurrilous scammers. We don't want to sit back and ask what can be done — we're rugby players — we're putting our game faces on and doing what we can to raise awareness and funds to push back against the criminals!",
-    facts: [
-      { title: "The $3.4 Billion Toll", body: "Elder fraud is a massive criminal industry. The FBI reports that seniors lose over $3.4 billion annually, with the average victim losing $30,000 — often wiping out a lifetime of retirement savings in days." },
-      { title: "Weaponized AI Voice Cloning", body: "Scammers don't just send clumsy emails anymore. They now use easily accessible AI voice-cloning tech to mimic a grandchild's actual voice, fabricating high-stakes emergencies to bypass a senior's natural defenses." },
-      { title: "The Silent Epidemic", body: "Only 1 in 24 cases of elder financial abuse are ever reported. Victims often hide the truth out of intense shame or fear of losing their independence." },
-    ],
-    closing: "By raising funds and sharing these facts, we bring this issue out of the shadows, break the stigma, and protect our parents and grandparents.",
-  },
-  fundraising: { goal: 15000, current: 1250, showThermometer: true },
-  tournament: { minTeams: 20, maxTeams: 36, playersPerTeam: 2, format: "Double Elimination", pointsToWin: 15, timeLimit: 20 },
-  registration: {
-    deadline: "2026-08-15", fee: 100, allowDonations: true,
-    collectShirtSizes: true, collectDietaryNeeds: true,
-    allowTeamLogo: true, allowTeamSlogan: true, sloganMaxWords: 10,
-    allowTeamStory: true, storyMaxWords: 300,
-    imageConsent: true, imageConsentText: "I consent to photos and videos taken during this event being used for promotional purposes by the organizer.",
-    waiverRequired: true, waiverText: "I agree to hold harmless ETRC and it's directors and members from any liability related to my participation in this event.",
-  },
-  payment: { eTransfer: true, eTransferEmail: "payments@etrc.com", stripe: true, cash: true },
-  sponsorTiers: [{ name: "Gold", amount: 2000 }, { name: "Silver", amount: 1000 }, { name: "Bronze", amount: 500 }, { name: "Community", amount: 100 }],
-  sponsors: [{ name: "Tall Tree Health", tier: "Gold" }],
-  giftBasket: [{ provider: "Christie's Pub", description: "Burger and a beer for $20 (taxes and tip extra)", code: "fightfraudETRC", website: "www.christiespub.com" }],
-  volunteers: [
-    { title: "Tournament Referee", count: 2 }, { title: "Registration Desk", count: 2 },
-    { title: "Parking Attendants", count: 4 }, { title: "Field Judges", count: 8 },
-    { title: "Food Staff", count: 6 }, { title: "Bar Staff", count: 2 },
-    { title: "Token Purchase Crew", count: 3 }, { title: "Media", count: 2 },
-  ],
-};
+import { useEvent } from "../context/EventContext";
+import { registrations, volunteers } from "../services/api";
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const formatDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-const generateCode = () => `EF-${Math.floor(100 + Math.random() * 900)}`;
-
-/* ═══════════════════════════════════════════════════════════
-   STYLES
-   ═══════════════════════════════════════════════════════════ */
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
-:root { --primary: ${C.brand.primary}; --secondary: ${C.brand.secondary}; --accent: ${C.brand.accent}; --dark: ${C.brand.dark}; --light: ${C.brand.light}; }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-.fd { font-family: 'Playfair Display', Georgia, serif; }
-.fb { font-family: 'Inter', system-ui, sans-serif; }
-.hero-bg { background: linear-gradient(160deg, ${C.brand.dark} 0%, #041266 30%, ${C.brand.dark} 60%, ${C.brand.primary}12 100%); }
-.cause-bg { background: linear-gradient(170deg, ${C.brand.secondary} 0%, #0d3328 100%); }
-.angle-cut { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 48px), 0 100%); }
-.angle-rev { clip-path: polygon(0 48px, 100% 0, 100% 100%, 0 100%); }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes pulse-glow { 0%,100% { box-shadow: 0 0 20px ${C.brand.primary}30; } 50% { box-shadow: 0 0 40px ${C.brand.primary}50; } }
-.anim1 { animation: fadeUp .6s ease-out forwards; }
-.anim2 { animation: fadeUp .6s ease-out .15s forwards; opacity: 0; }
-.anim3 { animation: fadeUp .6s ease-out .3s forwards; opacity: 0; }
-.glow { animation: pulse-glow 2s ease-in-out infinite; }
-.scroll-mt { scroll-margin-top: 80px; }
-input:focus, select:focus, textarea:focus { outline: none; border-color: ${C.brand.accent}88 !important; box-shadow: 0 0 0 3px ${C.brand.accent}22; }
-.therm-fill { transition: width 1.5s cubic-bezier(.4,0,.2,1); }
-`;
 
 const fs = (s) => ({ fontSize: s });
 const fw = (w) => ({ fontWeight: w });
@@ -94,6 +21,7 @@ const bg = (color) => ({ background: color });
    NAV
    ═══════════════════════════════════════════════════════════ */
 function Nav({ onReg }) {
+  const { config: C, eventId } = useEvent();
   const links = [{ l: "The Cause", h: "#cause" }, { l: "Details", h: "#details" }, { l: "Volunteer", h: "#volunteers" }, { l: "Sponsors", h: "#sponsors" }];
   return (
     <nav className="fb" style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, background: `${C.brand.dark}ee`, backdropFilter: "blur(12px)", borderBottom: `1px solid #ffffff12` }}>
@@ -118,6 +46,7 @@ function Nav({ onReg }) {
    HERO
    ═══════════════════════════════════════════════════════════ */
 function Hero({ onReg }) {
+  const { config: C, eventId } = useEvent();
   const pct = Math.min(100, (C.fundraising.current / C.fundraising.goal) * 100);
   return (
     <section className="hero-bg angle-cut" style={{ paddingTop: 120, paddingBottom: 100, textAlign: "center", position: "relative", overflow: "hidden" }}>
@@ -173,6 +102,7 @@ function Hero({ onReg }) {
    CAUSE SECTION
    ═══════════════════════════════════════════════════════════ */
 function Cause() {
+  const { config: C, eventId } = useEvent();
   return (
     <section id="cause" className="scroll-mt cause-bg angle-rev" style={{ padding: "80px 20px 64px", marginTop: -48 }}>
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
@@ -209,6 +139,7 @@ function Cause() {
    EVENT DETAILS
    ═══════════════════════════════════════════════════════════ */
 function Details() {
+  const { config: C, eventId } = useEvent();
   const items = [
     { icon: Calendar, label: "Date", value: formatDate(C.event.date) },
     { icon: Clock, label: "Time", value: `Until ${C.event.endTime}` },
@@ -250,6 +181,7 @@ function Details() {
    GIFT BASKET TEASER
    ═══════════════════════════════════════════════════════════ */
 function GiftBasket() {
+  const { config: C, eventId } = useEvent();
   if (!C.giftBasket.length) return null;
   return (
     <section style={{ background: "#010b3e", borderTop: "1px solid #ffffff08", padding: "56px 20px" }}>
@@ -284,6 +216,7 @@ function GiftBasket() {
    SPONSORS
    ═══════════════════════════════════════════════════════════ */
 function Sponsors() {
+  const { config: C, eventId } = useEvent();
   return (
     <section id="sponsors" className="scroll-mt" style={{ background: "#010a38", borderTop: "1px solid #ffffff08", padding: "72px 20px" }}>
       <div style={{ maxWidth: 960, margin: "0 auto", textAlign: "center" }}>
@@ -324,6 +257,7 @@ const LBL = { display: "block", fontSize: 11, fontWeight: 700, color: "#ffffff60
 const LBL_SM = { ...LBL, fontSize: 10 };
 
 function FormCard({ icon: Icon, title, sub, children }) {
+  const { config: C } = useEvent();
   return (
     <div style={{ background: "#ffffff04", border: "1px solid #ffffff10", borderRadius: 18, padding: 28, marginBottom: 20 }}>
       <h3 className="fb" style={{ fontSize: 13, fontWeight: 700, color: C.brand.accent, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: sub ? 4 : 20, display: "flex", alignItems: "center", gap: 8 }}><Icon size={14} /> {title}</h3>
@@ -336,8 +270,11 @@ function FormCard({ icon: Icon, title, sub, children }) {
 function countWords(s) { return s.trim() ? s.trim().split(/\s+/).length : 0; }
 
 function RegistrationForm({ formRef }) {
+  const { config: C, eventId } = useEvent();
   const [state, setState] = useState("form");
-  const [reconCode] = useState(generateCode());
+  const [reconCode, setReconCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   const [t, setT] = useState({
     teamName: "", slogan: "", story: "",
@@ -358,6 +295,35 @@ function RegistrationForm({ formRef }) {
   const valid = t.teamName && t.captainName && t.captainEmail && t.captainPhone && t.p1Name
     && (!C.registration.imageConsent || t.imageConsent) && (!C.registration.waiverRequired || t.waiverAccepted)
     && !storyOver && !sloganOver;
+
+  const handleSubmit = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await registrations.create(eventId, {
+        teamName: t.teamName,
+        slogan: t.slogan,
+        story: t.story,
+        captainName: t.captainName,
+        captainEmail: t.captainEmail,
+        captainPhone: t.captainPhone,
+        captainShirt: t.captainShirt,
+        captainDiet: t.captainDiet || "",
+        paymentMethod: t.paymentMethod,
+        donation: t.donation || 0,
+        imageConsent: t.imageConsent,
+        waiverAccepted: t.waiverAccepted,
+      });
+      setReconCode(result.reconciliation_code);
+      setState("success");
+    } catch (err) {
+      console.error("Registration failed:", err);
+      setSubmitError("Registration failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (state === "success") {
     const isPending = t.paymentMethod !== "stripe"; // Stripe auto-confirms; e-transfer and cash are manual
@@ -464,11 +430,11 @@ function RegistrationForm({ formRef }) {
             <div><label style={LBL}>Email *</label><input style={INP} type="email" value={t.captainEmail} onChange={e => u("captainEmail", e.target.value)} placeholder="jane@email.com" /></div>
             <div><label style={LBL}>Phone *</label><input style={INP} type="tel" value={t.captainPhone} onChange={e => u("captainPhone", e.target.value)} placeholder="+1 250-555-0100" /></div>
           </div>
-          {C.registration.collectShirtSizes && (
+          {C.registration.collectShirts && (
             <div style={{ marginTop: 12 }}><label style={LBL}><Shirt size={10} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Shirt Size</label>
               <select style={SEL} value={t.captainShirt} onChange={e => u("captainShirt", e.target.value)}><option value="">Select</option>{SHIRT_SIZES.map(s => <option key={s}>{s}</option>)}</select></div>
           )}
-          {C.registration.collectDietaryNeeds && (
+          {C.registration.collectDietary && (
             <div style={{ marginTop: 12 }}><label style={LBL}><UtensilsCrossed size={10} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Dietary Needs</label>
               <input style={INP} value={t.captainDiet || ""} onChange={e => u("captainDiet", e.target.value)} placeholder="Allergies, vegetarian, etc." /></div>
           )}
@@ -485,11 +451,11 @@ function RegistrationForm({ formRef }) {
                   <div><label style={LBL_SM}>Email *</label><input style={INP_SM} type="email" value={t[`p${n}Email`] || ""} onChange={e => u(`p${n}Email`, e.target.value)} placeholder="player@email.com" /></div>
                   <div><label style={LBL_SM}>Phone</label><input style={INP_SM} type="tel" value={t[`p${n}Phone`] || ""} onChange={e => u(`p${n}Phone`, e.target.value)} placeholder="+1 250-555-0100" /></div>
                 </div>
-                {C.registration.collectShirtSizes && (
+                {C.registration.collectShirts && (
                   <div style={{ marginTop: 8 }}><label style={LBL_SM}><Shirt size={9} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Shirt Size</label>
                     <select style={SEL_SM} value={t[`p${n}Shirt`] || ""} onChange={e => u(`p${n}Shirt`, e.target.value)}><option value="">Size</option>{SHIRT_SIZES.map(s => <option key={s}>{s}</option>)}</select></div>
                 )}
-                {C.registration.collectDietaryNeeds && (
+                {C.registration.collectDietary && (
                   <div style={{ marginTop: 8 }}><label style={LBL_SM}><UtensilsCrossed size={9} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Dietary Needs</label>
                     <input style={INP_SM} value={t[`p${n}Diet`] || ""} onChange={e => u(`p${n}Diet`, e.target.value)} placeholder="Allergies, vegetarian..." /></div>
                 )}
@@ -557,14 +523,15 @@ function RegistrationForm({ formRef }) {
         </FormCard>
 
         {/* Submit */}
-        <button type="button" disabled={!valid} onClick={() => setState("success")} style={{
-          width: "100%", padding: "16px 24px", borderRadius: 14, border: "none", cursor: valid ? "pointer" : "default",
+        <button type="button" disabled={!valid || submitting} onClick={handleSubmit} style={{
+          width: "100%", padding: "16px 24px", borderRadius: 14, border: "none", cursor: valid && !submitting ? "pointer" : "default",
           background: valid ? C.brand.primary : "#ffffff15", color: valid ? "#fff" : "#ffffff30",
           fontSize: 16, fontWeight: 800, fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+          opacity: submitting ? 0.7 : 1,
         }}>
-          <Award size={18} /> Submit Registration
+          <Award size={18} /> {submitting ? "Submitting..." : "Submit Registration"}
         </button>
-        <p className="fb" style={{ textAlign: "center", fontSize: 12, color: "#ffffff30", marginTop: 16 }}>Reconciliation code: <strong style={{ color: C.brand.accent }}>{reconCode}</strong></p>
+        {submitError && <p className="fb" style={{ textAlign: "center", fontSize: 13, color: C.brand.primary, marginTop: 12 }}>{submitError}</p>}
       </div>
     </section>
   );
@@ -577,10 +544,13 @@ const V_INP = { width: "100%", padding: "12px 14px", background: "#ffffff08", bo
 const V_LBL = { display: "block", fontSize: 11, fontWeight: 700, color: "#ffffff60", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 };
 
 function Volunteers() {
+  const { config: C, eventId } = useEvent();
   const totalNeeded = C.volunteers.reduce((s, r) => s + r.count, 0);
   const [showForm, setShowForm] = useState(false);
   const [selectedRole, setSelectedRole] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
   const [v, setV] = useState({ firstName: "", lastName: "", email: "", phone: "", role: "", otherRoles: [], experience: "", certifications: "" });
 
   const uv = (k, val) => setV(p => ({ ...p, [k]: val }));
@@ -601,13 +571,39 @@ function Volunteers() {
 
   const validVol = v.firstName && v.lastName && v.email && v.role;
 
-  const handleSubmit = () => {
-    setSubmitted(true);
+  const handleSubmit = async () => {
+    if (!validVol || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const primaryRole = C.volunteers.find(vol => vol.title === v.role);
+      const otherRoleIds = v.otherRoles
+        .map(title => C.volunteers.find(vol => vol.title === title)?.id)
+        .filter(Boolean);
+
+      await volunteers.apply(eventId, {
+        primaryRoleId: primaryRole?.id,
+        otherRoleIds,
+        firstName: v.firstName,
+        lastName: v.lastName,
+        email: v.email,
+        phone: v.phone,
+        experience: v.experience,
+        certifications: v.certifications,
+      });
+      setSubmitted(true);
+    } catch (err) {
+      console.error("Volunteer application failed:", err);
+      setSubmitError("Application failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const resetForm = () => {
     setShowForm(false);
     setSubmitted(false);
+    setSubmitError(null);
     setSelectedRole("");
     setV({ firstName: "", lastName: "", email: "", phone: "", role: "", otherRoles: [], experience: "", certifications: "" });
   };
@@ -692,13 +688,15 @@ function Volunteers() {
               <input style={V_INP} value={v.certifications} onChange={e => uv("certifications", e.target.value)} placeholder="First Aid, Food Safe, Serving It Right, etc." />
             </div>
 
-            <button type="button" disabled={!validVol} onClick={handleSubmit} style={{
-              width: "100%", padding: "14px 24px", borderRadius: 12, border: "none", cursor: validVol ? "pointer" : "default",
+            <button type="button" disabled={!validVol || submitting} onClick={handleSubmit} style={{
+              width: "100%", padding: "14px 24px", borderRadius: 12, border: "none", cursor: validVol && !submitting ? "pointer" : "default",
               background: validVol ? C.brand.secondary : "#ffffff15", color: validVol ? "#fff" : "#ffffff30",
               fontSize: 15, fontWeight: 800, fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              opacity: submitting ? 0.7 : 1,
             }}>
-              <HandHelping size={16} /> Submit Volunteer Application
+              <HandHelping size={16} /> {submitting ? "Submitting..." : "Submit Volunteer Application"}
             </button>
+            {submitError && <p className="fb" style={{ textAlign: "center", fontSize: 13, color: C.brand.primary, marginTop: 12 }}>{submitError}</p>}
           </div>
         )}
 
@@ -732,6 +730,7 @@ function Volunteers() {
    FOOTER
    ═══════════════════════════════════════════════════════════ */
 function Footer() {
+  const { config: C, eventId } = useEvent();
   return (
     <footer style={{ background: "#000820", borderTop: "1px solid #ffffff08", padding: "40px 20px", textAlign: "center" }}>
       <div style={{ maxWidth: 600, margin: "0 auto" }}>
@@ -753,8 +752,30 @@ function Footer() {
    APP
    ═══════════════════════════════════════════════════════════ */
 export default function App() {
+  const { config: C, eventId } = useEvent();
   const formRef = useRef(null);
   const scrollToForm = () => formRef.current?.scrollIntoView({ behavior: "smooth" });
+
+  const CSS = useMemo(() => `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
+:root { --primary: ${C.brand.primary}; --secondary: ${C.brand.secondary}; --accent: ${C.brand.accent}; --dark: ${C.brand.dark}; --light: ${C.brand.light}; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.fd { font-family: 'Playfair Display', Georgia, serif; }
+.fb { font-family: 'Inter', system-ui, sans-serif; }
+.hero-bg { background: linear-gradient(160deg, ${C.brand.dark} 0%, #041266 30%, ${C.brand.dark} 60%, ${C.brand.primary}12 100%); }
+.cause-bg { background: linear-gradient(170deg, ${C.brand.secondary} 0%, #0d3328 100%); }
+.angle-cut { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 48px), 0 100%); }
+.angle-rev { clip-path: polygon(0 48px, 100% 0, 100% 100%, 0 100%); }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse-glow { 0%,100% { box-shadow: 0 0 20px ${C.brand.primary}30; } 50% { box-shadow: 0 0 40px ${C.brand.primary}50; } }
+.anim1 { animation: fadeUp .6s ease-out forwards; }
+.anim2 { animation: fadeUp .6s ease-out .15s forwards; opacity: 0; }
+.anim3 { animation: fadeUp .6s ease-out .3s forwards; opacity: 0; }
+.glow { animation: pulse-glow 2s ease-in-out infinite; }
+.scroll-mt { scroll-margin-top: 80px; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: ${C.brand.accent}88 !important; box-shadow: 0 0 0 3px ${C.brand.accent}22; }
+.therm-fill { transition: width 1.5s cubic-bezier(.4,0,.2,1); }
+`, [C.brand.primary, C.brand.secondary, C.brand.accent, C.brand.dark, C.brand.light]);
 
   return (
     <div className="fb" style={{ background: C.brand.dark, minHeight: "100vh", color: "#fff" }}>
