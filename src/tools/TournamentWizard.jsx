@@ -9,8 +9,10 @@ import {
   Map, Package, HandHelping, Hotel, Car, Gift, Bot,
   ClipboardList, Shirt, UtensilsCrossed, Wrench, Target,
   Flag, Megaphone as Horn, BookOpen, Printer, Send,
-  CircleDot, LayoutGrid, UserPlus, Banknote
+  CircleDot, LayoutGrid, UserPlus, Banknote, RefreshCw
 } from "lucide-react";
+import { createTournament } from "../services/createTournament";
+import { useNavigate } from "react-router-dom";
 
 /* ═══════════════════════════════════════════════════════════
    SHARED UI COMPONENTS
@@ -385,10 +387,14 @@ const initialState = {
    ═══════════════════════════════════════════════════════════ */
 
 export default function TournamentBuilderWizard() {
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initialState);
   const [copied, setCopied] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
+  const [createResult, setCreateResult] = useState(null); // { orgId, eventId }
 
   const update = (field, value) => setData(prev => ({ ...prev, [field]: value }));
   const venueLabel = VENUE_LABELS[data.sport] || "Playing Areas";
@@ -430,6 +436,20 @@ export default function TournamentBuilderWizard() {
     navigator.clipboard.writeText(exportConfig());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCreateTournament = async () => {
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const result = await createTournament(data);
+      setCreateResult(result);
+    } catch (err) {
+      console.error("Tournament creation failed:", err);
+      setCreateError(err.message || "Failed to create tournament. Please try again.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   /* ─── STEP 0: Organization ─── */
@@ -999,22 +1019,90 @@ export default function TournamentBuilderWizard() {
           <Row label="Artifacts" value={`${enabledDeliverables} selected`} />
         </Section>
 
-        {/* Export */}
+        {/* Create Tournament (primary action) */}
         <div className="border-t border-stone-800 pt-6 space-y-4">
-          <button type="button" onClick={() => setShowExport(!showExport)}
-            className="w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm transition-all bg-amber-500 text-stone-950 hover:bg-amber-400 active:scale-[0.98]">
-            <Download size={16} /> {showExport ? "Hide" : "Export"} Tournament Configuration
-          </button>
 
-          {showExport && (
-            <div className="space-y-3">
-              <div className="relative">
-                <pre className="bg-stone-950 border border-stone-700 rounded-xl p-4 text-xs text-stone-400 overflow-auto max-h-64 font-mono">{exportConfig()}</pre>
-                <button type="button" onClick={copyConfig}
-                  className="absolute top-3 right-3 flex items-center gap-1.5 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 px-3 py-1.5 rounded-lg transition-colors">
-                  {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy</>}
+          {/* Success state */}
+          {createResult && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6 text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center mx-auto">
+                <Check size={32} className="text-emerald-400" />
+              </div>
+              <h3 className="text-xl font-bold text-emerald-300" style={{ fontFamily: "'Playfair Display', serif" }}>
+                Tournament Created!
+              </h3>
+              <p className="text-sm text-stone-400">
+                Your tournament is live. Share the link or head to the admin dashboard.
+              </p>
+              <div className="bg-stone-900 border border-stone-700 rounded-lg p-3">
+                <p className="text-xs text-stone-500 mb-1">Tournament URL</p>
+                <p className="text-sm text-amber-400 font-mono break-all">
+                  {window.location.origin}/e/{createResult.eventId}
+                </p>
+              </div>
+              <div className="flex gap-3 justify-center pt-2">
+                <button type="button"
+                  onClick={() => navigate(`/e/${createResult.eventId}/admin`)}
+                  className="flex items-center gap-2 py-2.5 px-5 rounded-xl font-bold text-sm bg-amber-500 text-stone-950 hover:bg-amber-400">
+                  Admin Dashboard →
+                </button>
+                <button type="button"
+                  onClick={() => navigate(`/e/${createResult.eventId}`)}
+                  className="flex items-center gap-2 py-2.5 px-5 rounded-xl font-bold text-sm bg-stone-800 text-stone-200 hover:bg-stone-700">
+                  View Landing Page
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Create button (not yet created) */}
+          {!createResult && (
+            <>
+              <button type="button"
+                onClick={handleCreateTournament}
+                disabled={creating}
+                className={`w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm transition-all ${
+                  creating
+                    ? "bg-amber-500/50 text-stone-950/50 cursor-wait"
+                    : "bg-amber-500 text-stone-950 hover:bg-amber-400 active:scale-[0.98]"
+                }`}>
+                {creating ? (
+                  <><RefreshCw size={16} className="animate-spin" /> Creating Tournament...</>
+                ) : (
+                  <><Zap size={16} /> Create Tournament</>
+                )}
+              </button>
+
+              {createError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-center">
+                  <p className="text-sm text-red-400">{createError}</p>
+                  <button type="button" onClick={handleCreateTournament}
+                    className="mt-2 text-xs text-red-300 underline hover:text-red-200">
+                    Try again
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* JSON export (secondary — keep for debugging/backup) */}
+          {!createResult && (
+            <div className="pt-2">
+              <button type="button" onClick={() => setShowExport(!showExport)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-semibold text-xs text-stone-500 hover:text-stone-300 bg-stone-900 hover:bg-stone-800 border border-stone-800 transition-all">
+                <Download size={14} /> {showExport ? "Hide" : "Export"} JSON Configuration
+              </button>
+              {showExport && (
+                <div className="space-y-3 mt-3">
+                  <div className="relative">
+                    <pre className="bg-stone-950 border border-stone-700 rounded-xl p-4 text-xs text-stone-400 overflow-auto max-h-64 font-mono">{exportConfig()}</pre>
+                    <button type="button" onClick={copyConfig}
+                      className="absolute top-3 right-3 flex items-center gap-1.5 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 px-3 py-1.5 rounded-lg transition-colors">
+                      {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy</>}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
