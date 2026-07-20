@@ -1,0 +1,25 @@
+-- ═══════════════════════════════════════════════════════════════════════
+-- Migration 006: Fix registrations INSERT...RETURNING RLS failure
+-- ═══════════════════════════════════════════════════════════════════════
+-- TEMPORARY — until Step 4 (auth layer) is built.
+--
+-- Same root cause as migration 005: registrations.create() in api.js
+-- does .insert({...}).select().single(), which requires the new row to
+-- pass a SELECT policy, not just the INSERT policy. registrations only
+-- had "Public insert registrations" (INSERT) and "Admin full
+-- registrations" (requires auth.uid(), unavailable pre-auth) — no
+-- policy let an anonymous submitter read back their own new row.
+--
+-- ⚠️  HIGHER PRIORITY THAN 004/005: registrations contains real PII
+-- (captain_name, captain_email, captain_phone, team_story). This policy
+-- makes ALL registrations for an event readable by anyone holding the
+-- anon key, not just the submitter's own row. Acceptable only for
+-- active solo development/testing.
+--
+-- TODO (Step 4): Replace with a SECURITY DEFINER Postgres function that
+-- performs the insert and returns only the reconciliation_code (and
+-- maybe id) to the caller — not the full row, and not other
+-- registrants' data. Drop this open SELECT policy at that point.
+-- ═══════════════════════════════════════════════════════════════════════
+
+CREATE POLICY "Public read registrations TEMP" ON registrations FOR SELECT USING (true);
