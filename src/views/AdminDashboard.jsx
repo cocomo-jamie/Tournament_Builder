@@ -14,8 +14,10 @@ import {
   BadgeCheck, QrCode, Scissors
 } from "lucide-react";
 import { useEvent } from "../context/EventContext";
-import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog } from "../services/api";
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
+import { useScreenLock } from "../hooks/useScreenLock";
 
 /* ═══════════════════════════════════════════════════════════
    STYLES
@@ -72,7 +74,7 @@ function MethodIcon({ m }) {
 }
 
 /* Sticky submit bar for batch pattern */
-function SubmitBar({ count, onSubmit, onDiscard, submitting, error }) {
+function SubmitBar({ count, onSubmit, onDiscard, submitting, error, disabled = false }) {
   const { config } = useEvent();
   const B = config.brand;
   if (count === 0) return null;
@@ -87,7 +89,7 @@ function SubmitBar({ count, onSubmit, onDiscard, submitting, error }) {
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={onDiscard} style={S.btn("#ffffff10", "#ffffffaa")}><Undo2 size={14} /> Discard All</button>
-        <button onClick={onSubmit} disabled={submitting} style={S.btn(B.accent, B.dark)}><Save size={14} /> {submitting ? "Saving..." : "Submit Updates"}</button>
+        <button onClick={onSubmit} disabled={submitting || disabled} style={S.btn(B.accent, B.dark)}><Save size={14} /> {submitting ? "Saving..." : "Submit Updates"}</button>
       </div>
     </div>
   );
@@ -98,9 +100,14 @@ function SubmitBar({ count, onSubmit, onDiscard, submitting, error }) {
    ═══════════════════════════════════════════════════════════ */
 function RegistrationsPanel() {
   const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
   const B = config.brand;
 
-  const { data: rawRegs, loading: regsLoading } = useRealtimeRegistrations(eventId);
+  const { data: rawRegs, loading: regsLoading, refetch: refetchRegs } = useRealtimeRegistrations(eventId);
+
+  const { isActive, queuePosition, queueLength, activeAdminName, recordActivity } =
+    useScreenLock(eventId, "registrations", adminUser?.id, adminUser?.display_name);
+  const canEdit = isActive;
 
   const data = useMemo(() => {
     return (rawRegs || []).map(r => ({
@@ -146,8 +153,13 @@ function RegistrationsPanel() {
     }
   }, [rawRegs]);
 
-  const queueChange = (id, field, value) => {
-    setChanges(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+  // Queues a partial-field change for a registration, e.g. { payment: "paid" } or { status: "approved" }
+  const queueChange = (id, fields) => {
+    setChanges(prev => ({ ...prev, [id]: { ...prev[id], ...fields } }));
+  };
+  const queueChangeWithActivity = (id, fields) => {
+    recordActivity();
+    queueChange(id, fields);
   };
   const getEffective = (r) => ({ ...r, ...(changes[r.id] || {}) });
   const hasChange = (id) => !!changes[id];
@@ -155,18 +167,37 @@ function RegistrationsPanel() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const updates = Object.entries(changes).map(([id, fields]) => ({
-        id,
-        ...(fields.payment !== undefined && { payment_status: fields.payment }),
-        ...(fields.status !== undefined && { status: fields.status }),
-        ...(fields.payment === "paid" && {
-          payment_confirmed_at: new Date().toISOString(),
-        }),
-        ...(fields.status === "confirmed" && {
-          confirmed_at: new Date().toISOString(),
-        }),
-      }));
+      const updates = Object.entries(changes).map(([id, fields]) => {
+        const update = { id };
+        if (fields.payment !== undefined) {
+          update.payment_status = fields.payment;
+          update.payment_confirmed_at = fields.payment === "paid" ? new Date().toISOString() : null;
+          update.payment_confirmed_by = fields.payment === "paid" ? adminUser?.id : null;
+        }
+        if (fields.status !== undefined) {
+          update.status = fields.status;
+          update.confirmed_at = fields.status === "approved" ? new Date().toISOString() : null;
+          update.approved_by = fields.status === "approved" ? adminUser?.id : null;
+        }
+        return update;
+      });
+
       await registrationsApi.batchUpdate(updates);
+      await refetchRegs(); // guarantees fresh data regardless of realtime merge timing
+
+      // Audit log each change
+      for (const u of updates) {
+        if (u.payment_status !== undefined) {
+          await activityLog.log(eventId, u.payment_status === "paid" ? "payment_confirmed" : "payment_reverted", "registration", u.id, u, adminUser?.id);
+        }
+        if (u.status !== undefined) {
+          const action = u.status === "approved" ? "registration_approved"
+            : u.status === "rejected" ? "registration_rejected"
+            : "registration_reverted"; // e.g. un-checking approval back to "submitted"
+          await activityLog.log(eventId, action, "registration", u.id, u, adminUser?.id);
+        }
+      }
+
       setChanges({});
     } catch (err) {
       console.error("Batch update failed:", err);
@@ -191,13 +222,33 @@ function RegistrationsPanel() {
   return (
     <div>
       {regsLoading && <p style={{ fontSize: 13, color: "#ffffff50", marginBottom: 12 }}>Loading registrations...</p>}
+
+      {!isActive && (
+        <div style={{ padding: 14, borderRadius: 10, background: "#D4A84315", border: "1px solid #D4A84340", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <Clock size={16} color={B.accent} />
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+              {activeAdminName || "Another admin"} is currently editing this screen.
+            </p>
+            <p style={{ fontSize: 12, color: "#ffffff60" }}>
+              You're #{queuePosition} in queue ({queueLength} total). This screen will unlock automatically when it's your turn.
+            </p>
+          </div>
+        </div>
+      )}
+      {isActive && queueLength > 1 && (
+        <div style={{ padding: 10, borderRadius: 8, background: "#22c55e10", border: "1px solid #22c55e30", marginBottom: 16, fontSize: 12, color: "#86efac" }}>
+          You have edit access. {queueLength - 1} other admin{queueLength - 1 !== 1 ? "s" : ""} waiting.
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
           <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#ffffff40" }} />
-          <input style={{ ...S.input, paddingLeft: 34 }} placeholder="Search teams, codes..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input style={{ ...S.input, paddingLeft: 34 }} placeholder="Search teams, codes..." value={search} onChange={e => { recordActivity(); setSearch(e.target.value); }} />
         </div>
         {["all", "pending", "paid", "confirmed"].map(f => (
-          <button key={f} onClick={() => setFilter(f)} style={{ ...S.btnSm(filter === f ? B.accent + "20" : "transparent", filter === f ? B.accent : "#ffffff50"), border: `1px solid ${filter === f ? B.accent + "40" : "#ffffff15"}` }}>
+          <button key={f} onClick={() => { recordActivity(); setFilter(f); }} style={{ ...S.btnSm(filter === f ? B.accent + "20" : "transparent", filter === f ? B.accent : "#ffffff50"), border: `1px solid ${filter === f ? B.accent + "40" : "#ffffff15"}` }}>
             {f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
@@ -229,19 +280,32 @@ function RegistrationsPanel() {
                   <td style={{ ...S.td, fontFamily: "monospace", color: B.accent, fontWeight: 700 }}>{r.code}</td>
                   <td style={S.td}><MethodIcon m={r.method} /></td>
                   <td style={{ ...S.td, fontWeight: 600 }}>${r.total}</td>
-                  <td style={S.td}><Badge status={r.payment} /></td>
-                  <td style={S.td}><Badge status={r.status} /></td>
                   <td style={S.td} onClick={e => e.stopPropagation()}>
-                    {r.payment === "pending" && r.status !== "rejected" ? (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => queueChange(r.id, "payment", "paid") || queueChange(r.id, "status", "confirmed")} style={S.btnSm("#22c55e20", "#22c55e")} title="Mark paid"><Check size={14} /></button>
-                        <button onClick={() => queueChange(r.id, "status", "rejected")} style={S.btnSm("#ef444420", "#ef4444")} title="Reject"><X size={14} /></button>
-                      </div>
-                    ) : r.payment === "paid" && changed ? (
-                      <button onClick={() => queueChange(r.id, "payment", "pending") || queueChange(r.id, "status", "submitted")} style={S.btnSm("#f59e0b20", "#f59e0b")} title="Undo"><Undo2 size={14} /></button>
-                    ) : r.payment === "paid" ? (
-                      <CheckCircle size={16} color="#22c55e" />
-                    ) : null}
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: canEdit ? "pointer" : "not-allowed" }}>
+                      <input
+                        type="checkbox"
+                        checked={r.payment === "paid"}
+                        disabled={!canEdit}
+                        onChange={(e) => queueChangeWithActivity(r.id, { payment: e.target.checked ? "paid" : "pending" })}
+                      />
+                      <Badge status={r.payment} />
+                    </label>
+                  </td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: canEdit ? "pointer" : "not-allowed" }}>
+                      <input
+                        type="checkbox"
+                        checked={r.status === "approved"}
+                        disabled={!canEdit}
+                        onChange={(e) => queueChangeWithActivity(r.id, { status: e.target.checked ? "approved" : "submitted" })}
+                      />
+                      <Badge status={r.status} />
+                    </label>
+                  </td>
+                  <td style={S.td} onClick={e => e.stopPropagation()}>
+                    {r.status !== "rejected" && (
+                      <button onClick={() => queueChangeWithActivity(r.id, { status: "rejected" })} disabled={!canEdit} style={S.btnSm("#ef444420", "#ef4444")} title="Reject"><X size={14} /></button>
+                    )}
                   </td>
                 </tr>
               );
@@ -249,7 +313,7 @@ function RegistrationsPanel() {
           </tbody>
         </table>
       </div>
-      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} submitting={submitting} error={submitError} />
+      <SubmitBar count={changeCount} onSubmit={submitAll} onDiscard={discardAll} submitting={submitting} error={submitError} disabled={!isActive} />
     </div>
   );
 }

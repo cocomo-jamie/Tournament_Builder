@@ -21,18 +21,19 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
   // table+eventId don't collide on the same Supabase channel object.
   const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    let query = supabase.from(table).select(options.select || "*").eq("event_id", eventId);
+    if (filter) Object.entries(filter).forEach(([k, v]) => { query = query.eq(k, v); });
+    if (orderBy) query = query.order(orderBy, { ascending });
+    const { data: rows, error } = await query;
+    if (!error) setData(rows);
+    setLoading(false);
+  }, [table, eventId, options.select, JSON.stringify(filter), orderBy, ascending]);
+
   // Initial fetch
   useEffect(() => {
-    async function fetch() {
-      setLoading(true);
-      let query = supabase.from(table).select(options.select || "*").eq("event_id", eventId);
-      if (filter) Object.entries(filter).forEach(([k, v]) => { query = query.eq(k, v); });
-      if (orderBy) query = query.order(orderBy, { ascending });
-      const { data: rows, error } = await query;
-      if (!error) setData(rows);
-      setLoading(false);
-    }
-    if (eventId) fetch();
+    if (eventId) fetchData();
   }, [eventId, table]);
 
   // Subscribe to changes
@@ -57,10 +58,14 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
               return [...prev, newRow];
             }
             if (eventType === "UPDATE") {
-              return prev.map((row) => (row.id === newRow.id ? newRow : row));
+              // Realtime sends bigint primary keys (e.g. registrations.id)
+              // as strings over the wire, while the initial REST fetch
+              // returns them as numbers — String() on both sides keeps the
+              // match working regardless of which table's PK type this is.
+              return prev.map((row) => (String(row.id) === String(newRow.id) ? { ...row, ...newRow } : row));
             }
             if (eventType === "DELETE") {
-              return prev.filter((row) => row.id !== oldRow.id);
+              return prev.filter((row) => String(row.id) !== String(oldRow.id));
             }
             return prev;
           });
@@ -73,7 +78,7 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
     };
   }, [eventId, table]);
 
-  return { data, loading, setData };
+  return { data, loading, setData, refetch: fetchData };
 }
 
 // ═══════════════════════════════════════════════════════════
