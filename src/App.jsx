@@ -16,6 +16,7 @@
 
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { EventProvider, useEvent } from "./context/EventContext";
+import { AuthProvider } from "./context/AuthContext";
 import { LoadingSpinner, ErrorDisplay, NoEventDisplay } from "./components/LoadingSpinner";
 
 // Views
@@ -25,6 +26,8 @@ import TVDisplay from "./views/TVDisplay";
 import LivePage from "./views/LivePage";
 import PlayerPortal from "./views/PlayerPortal";
 import TournamentWizard from "./tools/TournamentWizard";
+import Login from "./views/Login";
+import AcceptInvite from "./views/AcceptInvite";
 
 // ─────────────────────────────────────────────────────────
 // EventShell: resolves eventId and wraps children in provider
@@ -85,8 +88,13 @@ function LegacyRedirect({ path }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+        {/* ── Auth routes (new) ── */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
+
         {/* ── Root ── */}
         <Route path="/" element={<RootRedirect />} />
 
@@ -186,6 +194,7 @@ export default function App() {
           }
         />
       </Routes>
-    </BrowserRouter>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }

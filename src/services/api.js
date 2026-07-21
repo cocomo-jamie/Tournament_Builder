@@ -150,6 +150,38 @@ export const registrations = {
     return results.map((r) => r.data);
   },
 
+  // Toggle payment status independently (checkbox-driven)
+  async setPaymentReceived(id, received, adminUserId) {
+    const { data, error } = await supabase
+      .from("registrations")
+      .update({
+        payment_status: received ? "paid" : "pending",
+        payment_confirmed_at: received ? new Date().toISOString() : null,
+        payment_confirmed_by: received ? adminUserId : null,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // Toggle registration approval independently (checkbox-driven)
+  async setApproved(id, approved, adminUserId) {
+    const { data, error } = await supabase
+      .from("registrations")
+      .update({
+        status: approved ? "approved" : "submitted",
+        confirmed_at: approved ? new Date().toISOString() : null,
+        approved_by: approved ? adminUserId : null,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
   // Admin: confirm a single payment
   async confirmPayment(id, adminUserId) {
     const { data, error } = await supabase
@@ -914,6 +946,96 @@ export const localServices = {
       .select("*")
       .eq("event_id", eventId)
       .order("sort_order");
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════
+// ADMIN / AUTH
+// ═══════════════════════════════════════════════════════════
+
+export const admin = {
+  // Get the admin_users row for the currently logged-in user
+  async getCurrentAdmin() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data, error } = await supabase
+      .from("admin_users")
+      .select("*, organizations(name), events(name)")
+      .eq("id", user.id)
+      .single();
+    if (error) {
+      // No matching admin_users row (e.g. invite wasn't processed yet, or not an admin)
+      console.error("getCurrentAdmin failed:", error);
+      return null;
+    }
+    return data;
+  },
+
+  // Create an invite (org_admin or super_admin)
+  async createInvite(email, role, { orgId = null, eventId = null, displayName = null, invitedBy } = {}) {
+    const { data, error } = await supabase
+      .from("invites")
+      .insert({
+        email,
+        role,
+        org_id: orgId,
+        event_id: eventId,
+        display_name: displayName,
+        invited_by: invitedBy,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // List pending (unused) invites, optionally scoped to an org
+  async listInvites(orgId = null) {
+    let query = supabase
+      .from("invites")
+      .select("*")
+      .is("used_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+    if (orgId) query = query.eq("org_id", orgId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data;
+  },
+
+  // Fetch an invite by token (for the Accept Invite page, pre-signup)
+  async getInviteByToken(token) {
+    const { data, error } = await supabase
+      .from("invites")
+      .select("*, organizations(name)")
+      .eq("token", token)
+      .is("used_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // List admin_users for an org (Team panel)
+  async listOrgAdmins(orgId) {
+    const { data, error } = await supabase
+      .from("admin_users")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  // Create a new organization (super_admin only, enforced by RLS in Pass 3 — for now any admin can call this)
+  async createOrganization(name, email) {
+    const { data, error } = await supabase
+      .from("organizations")
+      .insert({ name, email })
+      .select()
+      .single();
     if (error) throw error;
     return data;
   },
