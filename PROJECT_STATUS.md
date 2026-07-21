@@ -1,23 +1,44 @@
 # Tournament Builder Platform — Project Status & Handoff
 
+**Last updated:** 2026-07-21 (end of session — auth complete, registrations overhauled)
+
 ## Quick Context
-We're building a **multi-sport charity tournament management platform**. Originally scoped for an Ebb Tide Rugby Club (ETRC) bocce tournament supporting Elder Fraud Prevention, it's been generalized to support any organization running any sport's charity tournament.
+A multi-sport charity tournament management platform. Originally scoped for an Ebb Tide Rugby Club (ETRC) bocce tournament supporting Elder Fraud Prevention, generalized to support any organization running any sport's charity tournament.
 
 **GitHub Repo:** `cocomo-jamie/Tournament_Builder`
-**Database:** Supabase (project created, schema deployed, migration applied)
-**Stack:** React (Vite) + Tailwind CSS + Supabase (PostgreSQL + Realtime + RLS) + Lucide Icons + React Router
+**Database:** Supabase (schema deployed, 9 migrations applied)
+**Stack:** React (Vite) + Tailwind CSS + Supabase (PostgreSQL + Realtime + RLS + Auth) + Lucide Icons + React Router
 
 ---
 
-## Two Delivery Models (Both Planned)
+## Where We Are: Steps 1–4 Complete
 
-### Model 1: SaaS (You Host)
-Multi-tenant platform. One codebase, one Supabase project, many tournaments. Organizations sign up, run the wizard, get a URL like `tournamentbuilder.com/etrc-bocce`. We manage deployment and bill per event or subscription.
+| Step | Status | Notes |
+|---|---|---|
+| 1–2: Data-driven refactor (all 5 views) | ✅ Done | LandingPage, LivePage, PlayerPortal, TVDisplay, AdminDashboard all pull live Supabase data via `useEvent()` + realtime hooks |
+| 3: Wizard → database flow | ✅ Done, tested end-to-end | "Create Tournament" writes across 10 tables, returns live event URL |
+| 4: Auth layer | ✅ Functionally done | Login, invite-based signup, role-based route protection, Team management UI, super-admin org creation |
+| Registrations panel overhaul | ✅ Done | Independent payment/approval checkboxes, audit trail, single-admin lock queue |
+| **4b: Match overrun policy** | 📋 Spec written, not built | See `FEATURE_SPEC_match_overrun.md` — depends on Referee role (done) being exercised in Game Day UI (not built) |
+| **Pass 3: RLS tightening** | ⚠️ **NOT DONE — see below** | Highest-priority remaining item |
+| 5: Serverless functions (OTP + Stripe) | Not started | Player Portal OTP shows graceful error; no backend exists |
+| 6: Artifact generation engine | Not started | Publish tab has hardcoded placeholder data |
+| 7: Deployment / hosting | Not started | App only runs via local `npm run dev` |
+| 8: Style extraction | Not started | Lower priority enhancement |
 
-### Model 2: Self-Hosted Package
-Wizard generates a complete deployment package. Organization sets up their own Vercel + Supabase accounts, deploys independently. We provide one-click deploy templates.
+---
 
-Both models use the identical tournament engine. The difference is infrastructure ownership.
+## ⚠️ Critical: RLS Is Still Wide Open (Pass 3 — next session priority)
+
+During Step 3/4 testing, several tables got **temporary public RLS policies** to unblock development, since no auth layer existed yet at the time. Auth now exists (Step 4), but these were never tightened back down. **This is the top priority for the next session.**
+
+Migrations that opened public access, and what needs to happen to each in Pass 3:
+
+- **004** (`wizard_public_insert.sql`) — public INSERT on `organizations`, `events`, `event_dates`, `playing_areas`, `volunteer_roles`, `sponsor_tiers`, `sponsors`, `gift_basket_items`, `local_services`, `staff_contacts`. → Should scope to authenticated admins only (the Wizard now runs after login in practice, but the DB doesn't enforce it).
+- **005** (`fix_returning_rls.sql`) — public SELECT on `organizations` and `events` (including draft events). → Needs scoping; likely fine to keep broad read on published events, but drafts and org details probably shouldn't be fully public.
+- **006** (`fix_registrations_returning.sql`) — public SELECT on `registrations`. → **Highest urgency**: this table holds registrant PII (name, email, phone). Anyone with the anon key can currently read every registrant's contact info for any event. Should be replaced with a `SECURITY DEFINER` function (same pattern as the invite-signup trigger) that returns only the reconciliation code to the submitter, not the full row to anyone.
+
+Also worth reviewing while in there: every existing `"Admin full X"` policy currently checks only `auth.uid() IN (SELECT id FROM admin_users WHERE active = true)` — **no org or event scoping at all**. Any admin_users row (any role, any org) currently grants full access to every organization's and every event's data. Migration 007 added `org_id`/`event_id` to `admin_users` specifically to support proper scoping, but the policies themselves were never rewritten to use it. This should be part of Pass 3 too.
 
 ---
 
@@ -26,234 +47,124 @@ Both models use the identical tournament engine. The difference is infrastructur
 ```
 Tournament_Builder/
 ├── .gitignore
-├── .env.example                    # Supabase + Stripe + Twilio env template
-├── WIRING_GUIDE.md                 # Integration instructions for all components
-├── package.json                    # Vite + React + Supabase + Tailwind deps
-├── vite.config.js                  # Vite with @/ path alias
-├── tailwind.config.js              # Brand colors + font families
+├── .env.example
+├── WIRING_GUIDE.md
+├── PROJECT_STATUS.md                        # this file
+├── FEATURE_SPEC_match_overrun.md            # policy spec, not yet built
+├── package.json
+├── vite.config.js
+├── tailwind.config.js
 ├── postcss.config.js
-├── index.html                      # Entry HTML with Google Fonts
+├── index.html
 ├── supabase/
-│   ├── schema.sql                  # Full DDL — 22 tables, triggers, RLS, realtime
+│   ├── schema.sql
 │   └── migrations/
-│       └── 001_playing_areas.sql   # Renamed courts → playing_areas
+│       ├── 001_playing_areas.sql            # courts → playing_areas rename
+│       ├── 002_rules_content.sql            # events.rules_content column
+│       ├── 003_fix_admin_users_recursion.sql # infinite recursion in admin_users RLS
+│       ├── 004_wizard_public_insert.sql     # ⚠️ temp public INSERT, 10 tables
+│       ├── 005_fix_returning_rls.sql        # ⚠️ temp public SELECT, organizations/events
+│       ├── 006_fix_registrations_returning.sql # ⚠️ temp public SELECT, registrations (PII)
+│       ├── 007_auth_org_scoping.sql         # admin_users.org_id, invites table + trigger
+│       ├── 008_fix_reconciliation_code.sql  # SECURITY DEFINER fix for recon code generation
+│       └── 009_registration_approval_audit.sql # approved_by column, admin_lock_queue table
 ├── src/
-│   ├── main.jsx                    # React entry point
-│   ├── index.css                   # Tailwind directives + global styles
-│   ├── App.jsx                     # React Router with all routes
-│   ├── supabaseClient.js           # Supabase SDK init from env vars
+│   ├── main.jsx
+│   ├── index.css
+│   ├── App.jsx                              # routing, AuthProvider, ProtectedRoute wiring
+│   ├── supabaseClient.js
 │   ├── services/
-│   │   └── api.js                  # All CRUD operations by domain
+│   │   └── api.js                           # all CRUD by domain, + admin block (auth/invites)
 │   ├── hooks/
-│   │   └── useRealtime.js          # 7 real-time subscription hooks
+│   │   ├── useRealtime.js                   # 7 realtime hooks + generic refetch()
+│   │   ├── useEventConfig.js
+│   │   └── useScreenLock.js                 # FIFO admin lock queue (Registrations panel)
+│   ├── context/
+│   │   ├── EventContext.jsx                 # useEvent() — event config
+│   │   └── AuthContext.jsx                  # useAuth() — session/adminUser
+│   ├── components/
+│   │   ├── LoadingSpinner.jsx                # LoadingSpinner, ErrorDisplay, NoEventDisplay
+│   │   └── ProtectedRoute.jsx                # admin route scope-checking
+│   ├── utils/
+│   │   └── configTransformer.js             # DB row → view config shape
 │   ├── views/
-│   │   ├── LandingPage.jsx         # Public site: registration + volunteers + cause
-│   │   ├── AdminDashboard.jsx      # 3-context admin: Build / Publish / Game Day
-│   │   ├── TVDisplay.jsx           # Auto-rotating projector with sponsor slots
-│   │   ├── LivePage.jsx            # Mobile game day hub with fan engagement
-│   │   └── PlayerPortal.jsx        # Captain OTP + score entry/verification
+│   │   ├── LandingPage.jsx                  # public site — data-driven ✅
+│   │   ├── AdminDashboard.jsx               # Build/Publish/GameDay/Team — data-driven ✅
+│   │   ├── TVDisplay.jsx                    # projector display — data-driven ✅
+│   │   ├── LivePage.jsx                     # mobile game day hub — data-driven ✅
+│   │   ├── PlayerPortal.jsx                 # OTP captain flow — data-driven ✅ (OTP send needs Step 5)
+│   │   ├── Login.jsx                        # admin login
+│   │   ├── AcceptInvite.jsx                 # invite → signup flow
+│   │   └── SuperAdminDashboard.jsx          # org creation + org_admin invites
 │   └── tools/
-│       └── TournamentWizard.jsx    # 11-step event configuration wizard
+│       └── TournamentWizard.jsx             # 11-step wizard, "Create Tournament" writes to DB ✅
 ```
 
 ---
 
-## Route Map
+## Auth System — How It Works
 
-| Route | View | Auth | Purpose |
-|-------|------|------|---------|
-| `/` | LandingPage | Public | Registration, cause, sponsors, volunteer signup |
-| `/live` | LivePage | Public | Game day: scores, standings, bracket, fan zone |
-| `/captain` | PlayerPortal | OTP (phone) | Captain score entry and verification |
-| `/tv` | TVDisplay | Public | Clubhouse projector auto-rotating display |
-| `/admin` | AdminDashboard | Admin (TBD) | Build, publish, and game day operations |
-| `/wizard` | TournamentWizard | Admin (TBD) | Tournament configuration setup tool |
+**Roles** (`admin_users.role`): `super_admin`, `org_admin`, `admin`, `treasurer`, `referee`, `volunteer_coord`, `control_desk`.
+
+- `org_id = NULL` → super_admin (platform-wide)
+- `org_id` set, `event_id = NULL` → org_admin (all events under that org)
+- Both set → event-scoped role (one event only)
+
+**Invite flow:** An admin creates an `invites` row (email, role, org/event scope, token). The invitee visits `/accept-invite?token=...`, sets a password via `supabase.auth.signUp()`. A `SECURITY DEFINER` Postgres trigger (`handle_invite_signup`, migration 007) auto-creates the matching `admin_users` row the instant signup completes — no serverless function needed for this part.
+
+**Route protection:** `/e/:eventId/admin` is wrapped in `ProtectedRoute` (checks session → adminUser exists → scope matches this event/org). Not-logged-in redirects to `/login?redirect=...` and bounces back after login. Wrong-event admins get redirected to their own event; wrong-org admins see "Access Denied" (no single valid redirect target).
+
+**Role → tab visibility in AdminDashboard:**
+- super_admin / org_admin / admin → Build, Publish, Game Day, Team
+- treasurer / volunteer_coord → Build only
+- referee / control_desk → Game Day only
+
+**Known gap:** Confirm email is disabled in Supabase (intentional — invite-gating already proves email ownership, confirmation was redundant and added a 3-5 min delay).
 
 ---
 
-## Database Schema Summary
+## Registrations Panel — Current Behavior
 
-**22 tables** deployed to Supabase, organized by domain:
+- Payment status and registration approval are **independent** — a checkbox each, not one combined action. Reflects real workflow: an admin can approve a cash-at-door team before payment is confirmed.
+- Deny/Reject remains a separate action, queued through the same batch-submit flow as the checkboxes (not immediate).
+- `submitAll` writes `payment_confirmed_by`/`payment_confirmed_at` and `approved_by`/`confirmed_at`, plus an `activity_log` entry per change (`registration_approved` / `registration_rejected` / `registration_reverted` / `payment_confirmed` / `payment_reverted`) — full audit trail of which admin did what.
+- **Single-admin lock queue**: only one admin can edit the Registrations panel at a time. Others see a queue position banner, read-only controls, and are promoted automatically (FIFO by join order) when the active admin finishes, disconnects (~75s no heartbeat), or goes idle (5 min no interaction — requeues at the back, doesn't hold their spot).
+- **Not yet tested:** the actual multi-tab queue promotion behavior (single-admin flow is confirmed working; 2+ admin scenario needs a live test next session).
+- Display-refresh bug (changes not appearing without manual reload) was traced to a `bigint`/string ID mismatch in the realtime merge logic (`registrations.id` is the only `BIGSERIAL` PK among realtime-subscribed tables) — fixed generically in `useRealtimeTable`. An explicit `refetch()` was also added as a belt-and-suspenders guarantee after submit, independent of realtime timing.
 
-**Core:** `organizations`, `events` (big config table with JSONB checklists, feature flags, payment config, fundraising), `event_dates`
+---
 
-**Registration & Teams:** `registrations` (with auto-generated reconciliation codes via trigger), `teams`, `players`
+## Known Issues / Technical Debt
 
-**Tournament Structure:** `pools`, `playing_areas` (generalized from "courts"), `brackets`, `matches` (with full scoring flow: pending → scheduled → ready → live → score_entered → disputed → completed), `pool_standings` (auto-computed by trigger on match completion)
+1. **RLS scoping** — see Critical section above. This is the main item.
+2. **Match overrun / Referee authority** — spec written, not implemented. Needs Game Day UI work: per-area and tournament-wide deficit/surplus tracking, extend-time / pull-forward actions gated to admin+referee.
+3. **Match engine stubs** — Generate Bracket, Assign Areas, and Reassign Captain in Game Day currently show "not yet implemented" messages; they need a match-selection UI that wasn't in scope for the data-driven refactor.
+4. **Fan engagement data** (`FAN_COUNTS`, `SPONSOR_QUIZ`, `PHOTO_ENTRIES` in LivePage) — still hardcoded; no DB tables exist for these yet.
+5. **BracketView round labels** — shows "Round 1/2/3" instead of "Quarterfinal/Semifinal/Final"; TODO comment left in code to derive proper labels from `bracket.total_rounds`.
 
-**Sponsors & Services:** `sponsor_tiers`, `sponsors`, `local_services`, `gift_basket_items`
+---
 
-**Volunteers & Staff:** `volunteer_roles`, `volunteer_applications`, `staff_contacts`
+## Proposed Schedule (Next Session)
 
-**Publishing:** `artifacts` (draft → review → approved → published workflow with versioning and audience targeting)
+1. **Pass 3 — RLS tightening** (priority): scope `admin_users`-based policies by `org_id`/`event_id`, replace public registrations SELECT with a `SECURITY DEFINER` function, narrow the Wizard's public INSERT policies to authenticated admins.
+2. **Step 7 — Deployment**: get the app live on a real host (Vercel is the natural fit for Vite) with production env vars, so there's something real to test against instead of only local dev.
+3. **Step 5 — Serverless functions**: Twilio (OTP SMS) and Stripe (payments) — needed for Player Portal captain login and real payment processing to actually function.
+4. **Step 6 — Artifact generation engine**: real schedule/run-sheet/resource-directory generation for the Publish tab.
 
-**Auth & Game Day:** `admin_users` (role-based: org_admin, admin, treasurer, referee, volunteer_coord, control_desk), `otp_sessions`, `playing_area_queue`, `announcements`, `activity_log`
-
-**7 Triggers:** auto updated_at (×5), reconciliation code generation, total amount calculation, pool standings recomputation, fundraising total updates, volunteer role fill count
-
-**Database Functions:** `assign_home_captain(match_uuid)` — randomizes which team's captain enters scores
-
-**RLS:** Public read on game day data, public insert for registrations and volunteer applications, admin full CRUD
-
-**Realtime:** Enabled on matches, pool_standings, playing_areas, teams, announcements, playing_area_queue
-
-**Migration applied:** `001_playing_areas.sql` — renamed `courts`/`court_queue` to `playing_areas`/`playing_area_queue`, updated all FK columns, indexes, and renamed `events.court_count`/`court_label` to `area_count`/`area_label`
+Steps 5–6 are bigger lifts; reserved Fable 5 credits ($140) may be worth spending there per earlier discussion, once Sonnet+CC has the foundation (Pass 3 + deployment) solid.
 
 ---
 
 ## Service Layer (src/services/api.js)
 
-Complete CRUD operations covering:
-- `events` — get, update, status transitions, fundraising, rules
-- `registrations` — public create, admin list with filters/search, batch update, confirm payment, reject, lookup by recon code
-- `teams` — create from registration, list, check-in/undo, pool assignment, elimination
-- `players` — batch create, lookup by phone (OTP resolution)
-- `matches` — list (with joins), get live, submit score, verify score (auto-calculates winner), dispute, resolve dispute, force verify, assign playing area, start match (calls DB function), award bye, reassign home captain
-- `pools` — create batch, list with nested standings
-- `playingAreas` — list, update status, batch create
-- `brackets` — create, list with nested matches
-- `volunteers` — public apply, admin list, batch approve/decline, list roles
-- `sponsors` — list with tiers, CRUD
-- `artifacts` — list, update status through pipeline
-- `announcements` — list active, create with priority/TV flags, deactivate
-- `otp` — request (calls serverless function), verify (checks code + expiry)
-- `activityLog` — log actions, list for audit
-- `giftBasket`, `localServices` — read lists
+Domains: `events`, `registrations` (+ `setPaymentReceived`/`setApproved`), `teams`, `players`, `matches`, `pools`, `brackets`, `sponsors`, `volunteers`, `giftBasket`, `localServices`, `artifacts`, `announcements`, `activityLog`, `otp`, `admin` (auth/invites).
 
----
+## Hooks (src/hooks/)
 
-## Real-time Hooks (src/hooks/useRealtime.js)
+- `useRealtime.js` — `useRealtimeTable` (generic, now with `refetch()`), `useRealtimeMatches`, `useRealtimeStandings`, `useRealtimeTeams`, `useRealtimeAreas`, `useRealtimeAnnouncements`, `useRealtimeRegistrations`, `useWatchMatch` — all channel names now include a per-instance random suffix to prevent collision when the same table is subscribed to twice on one page.
+- `useEventConfig.js` — fetches + transforms event config for `EventContext`
+- `useScreenLock.js` — FIFO lock queue with heartbeat presence + idle timeout
 
-- `useRealtimeMatches(eventId)` → `{ matches, live, completed, upcoming }`
-- `useRealtimeStandings(eventId)` → `{ pools }` with nested standings
-- `useRealtimeAreas(eventId)` → playing area status
-- `useRealtimeTeams(eventId)` → `{ teams, checkedIn, eliminated }`
-- `useRealtimeAnnouncements(eventId)` → active announcements
-- `useRealtimeQueue(eventId)` → playing area allocation queue
-- `useWatchMatch(matchId)` → single match watcher for captain portal
-- `useRealtimeRegistrations(eventId)` → new registration notifications
+## Database (supabase/schema.sql + 9 migrations)
 
-All use a shared `useRealtimeTable` base handling initial fetch, WebSocket subscription, and INSERT/UPDATE/DELETE state updates.
-
----
-
-## What Each View Does (Current State)
-
-### TournamentWizard.jsx (11 steps)
-Collects: org info + brand colors + logos/images, event details + multi-day dates, venue facilities + sport-specific equipment + signage + permits/licenses checklists, cause + fundraising goal + thermometer toggle, tournament format + team sizes + scoring rules, registration config (team logos/slogans/stories, image consent, waivers, shirt sizes, dietary), fees + payment methods (e-Transfer/Stripe/cash) + reconciliation, sponsor tiers + sponsors + local services + digital gift basket, volunteer roles (with headcounts) + staff contacts (with role dropdown), deliverable toggles (schedule, run sheet, site maps, resource directory, volunteer/staff/service packages, AI Q&A, gift basket page). Exports JSON.
-
-### LandingPage.jsx
-Hero with fundraising thermometer, cause section with 3 educational fact cards, event details grid, registration form (captain = Player 1 with dietary, additional players scale to playersPerTeam - 1, each with full contact fields, payment selector, donation, consent + waiver), volunteer section (clickable role cards open signup form with primary role pre-filled, multi-role checkboxes, experience, certifications), gift basket teaser, sponsor tiers, footer. Post-submit differentiates pending (e-Transfer/cash — "Registration Submitted" with next steps) from confirmed (Stripe — "You're In").
-
-### AdminDashboard.jsx (3 contexts)
-**Build:** Stats cards (teams, revenue, volunteers, fundraising %), tabbed panels — Registrations (search/filter table, expand rows for details, batch submit with queued changes + sticky submit bar + undo), Volunteers (cards with approve/decline + per-item undo + batch submit), Fundraising (thermometer + editable amount + submit), Rules (markdown editor + submit).
-
-**Publish:** Artifact list with type icons, status badges (draft/review/approved/published), audience tags. Workflow buttons advance through pipeline. ID badge preview (69×104mm, 4-up A4, front/back with fold line). "Generate All Drafts" button.
-
-**Game Day:** Master tournament clock (start/pause/resume/reset, real-time). Format simulator (inputs: teams/format/areas/time-per-match → outputs: total matches, rounds, concurrent games, estimated duration with over-8-hours warning). Team check-in panel with no-show/bye buttons. Playing area grid. Match engine controls (generate bracket, assign areas, reassign home captain, force verify, award bye, resolve dispute). Announcement composer.
-
-### TVDisplay.jsx
-8-slide auto-cycle with variable durations: Gold sponsor (15s) → Live courts grid (15s) → Silver sponsors (5s) → Pool standings (15s) → Bronze sponsors (5s) → Championship bracket (15s) → Community sponsors (5s) → Tournament stats (15s). Total cycle ~90s. Persistent header (branding, view label, tournament clock, real-time clock). Persistent announcement ticker. Progress dots distinguish sponsor/content slides. Score flash animations on updated matches. Pulsing live indicators.
-
-### LivePage.jsx
-Mobile-first with bottom tab bar (Courts, Standings, Bracket, Schedule, Fan Zone). Team picker overlay on first visit (pick or random assign). Personalized live banner (your team's score when playing). Full-screen search overlay. Tappable team names everywhere open team profile sheet (stats, next match with live score, complete match history). **Fan engagement:** Sponsor quiz (3 questions, all correct = gift basket discount upgrade 10→15%), fan photo contest with voting, fan base leaderboard (trophy for biggest following), donation challenge leaderboard (trophy for most fan donations post-event). Fundraising thermometer + announcements feed.
-
-### PlayerPortal.jsx
-Phone entry → OTP verification (6 individual digit inputs, auto-advance, shake on error, auto-submit on complete) → Captain dashboard. Dashboard: stats row, active match panel that adapts by role — Home Captain gets score entry (two large number inputs + submit), Away Captain waits then gets verify/dispute interface. Post-submit states: waiting for verification, verified (green), disputed (red, referee notified). Team roster. Full match history with W/L/Home/Away badges.
-
----
-
-## CRITICAL: Known Gaps & Required Work
-
-### 1. Data-Driven Refactor (BLOCKING — must do first)
-**Problem:** Every view has hardcoded config constants and mock data. The wizard exports JSON but nothing consumes it. Views don't read from Supabase.
-
-**Solution:** Replace every hardcoded `const C = {...}` / `const MOCK_X = [...]` with Supabase fetches keyed to an event ID. Pattern for every view:
-```jsx
-const [config, setConfig] = useState(null);
-useEffect(() => { events.get(eventId).then(setConfig); }, [eventId]);
-if (!config) return <LoadingSpinner />;
-// Then use config.brand.primary instead of C.brand.primary, etc.
-```
-
-**Scope:** Touches all 6 view files. Same pattern each time. Components/layouts/interactions stay identical — only the data source changes.
-
-### 2. Wizard-to-Database Flow
-The wizard's Export button needs to become "Create Tournament" — writes to `organizations` + `events` tables, creates `volunteer_roles`, `sponsor_tiers`, `playing_areas`, `event_dates`, and returns the event ID.
-
-### 3. Auth Layer
-Admin login via Supabase Auth. Role-based route protection matching `admin_users` table roles. Protected routes for `/admin` and `/wizard`.
-
-### 4. Serverless Functions
-Templates exist in WIRING_GUIDE.md but not deployed:
-- `/api/send-otp` — Twilio SMS for captain verification
-- `/api/create-stripe` — Stripe Checkout session creation
-
-### 5. Artifact Generation Engine
-Publish context has the workflow UI but no actual content generation. Needs: event schedule builder, game run sheet from match data, volunteer packages from role assignments, staff packages, ID badge PDF generation (layout spec: 69×104mm portrait, 4-up on A4, front/back with fold), site maps, resource directory.
-
-### 6. Platform Shell (SaaS model only)
-Organizer sign-up/login, multi-tournament dashboard, subdomain or path routing to resolve event ID, Stripe Connect for billing.
-
-### 7. Style Reference Extraction (enhancement)
-Serverless function to fetch an organizer's website and extract brand colors/fonts/logos. Three approaches viable: CSS parsing, AI-assisted extraction via Anthropic API, or screenshot + vision analysis.
-
-### 8. Schema Addition Needed
-`events` table needs a `rules_content TEXT` column — the Rules tab in the admin dashboard references it but it wasn't in the original schema. Migration needed:
-```sql
-ALTER TABLE events ADD COLUMN rules_content TEXT;
-```
-
----
-
-## Environment Variables Required
-
-### `.env` (local dev)
-```
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-VITE_STRIPE_PUBLIC_KEY=pk_test_xxx
-VITE_EVENT_ID=your-event-uuid
-```
-
-### Deployment (Netlify/Vercel)
-```
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your-service-key
-TWILIO_SID=your-twilio-sid
-TWILIO_AUTH_TOKEN=your-twilio-auth
-TWILIO_PHONE=+1234567890
-STRIPE_SECRET_KEY=sk_test_xxx
-SITE_URL=https://your-site.netlify.app
-```
-
----
-
-## Design Decisions Made
-
-- **Playing areas, not courts:** Database and code use `playing_areas` as the universal term. The `events.area_label` field stores the display word (Courts, Pitches, Lanes, etc.) per sport.
-- **Captain = Player 1:** Registration form collects captain as Player 1. Additional player slots = `playersPerTeam - 1`.
-- **Batch submit pattern:** Admin dashboard queues changes locally with visual indicators. Nothing persists until explicit "Submit Updates" action. Enables undo before commit.
-- **Home Captain Rule:** For each match, one captain is randomly designated to enter the score. The other captain verifies or disputes. Referee can override.
-- **Post-registration status:** e-Transfer and cash payments are "submitted" (pending), not "registered." Confirmation happens only after admin matches the reconciliation code. Stripe auto-confirms.
-- **Sponsor rotation on TV:** Gold gets 15s at the top of cycle, Silver/Bronze/Community get 5s each interleaved between content views. ~90s total cycle.
-- **Fan engagement as participation driver:** Team following is required (or random assigned), sponsor quiz gates gift basket upgrades, photo contest + fan base trophy + donation challenge create competitive engagement.
-
----
-
-## Recommended Next Steps (in order)
-
-1. **Add `rules_content` column** — quick migration
-2. **Data-driven refactor** — make all views read from Supabase by event ID
-3. **Wizard → database flow** — Create Tournament writes to Supabase
-4. **Auth layer** — admin login + protected routes
-5. **Deploy serverless functions** — OTP + Stripe
-6. **Artifact generation** — schedule, run sheet, badges, packages
-7. **Platform shell or deployment packaging** — depending on which model ships first
-8. **Style extraction** — scan organizer's website for branding
-
----
-
-## Test Data
-
-The ETRC Bocce Classic config (used throughout development) is available as a JSON export from the wizard. Key values: org "ETRC", sport "bocce", 20-36 teams, 2 players per team, double elimination, 6 courts, $100 entry fee, $15,000 fundraising goal, Aug 29 2026, ETRC Clubhouse. Gold sponsor: Tall Tree Health. 8 volunteer roles totaling 29 volunteers needed. Cause: Elder Fraud Prevention.
+22 core tables + `activity_log`, `invites`, `admin_lock_queue`. Full RLS (currently over-permissive in places — see Critical section), realtime enabled on `matches`, `pool_standings`, `playing_areas`, `teams`, `announcements`, `playing_area_queue`, `admin_lock_queue`. Key triggers: reconciliation code generation (now `SECURITY DEFINER`, atomic), invite-signup → admin_users auto-creation (`SECURITY DEFINER`), pool standings recomputation, fundraising totals, volunteer role fill counts.
