@@ -211,17 +211,6 @@ export const registrations = {
     if (error) throw error;
     return data;
   },
-
-  // Lookup by reconciliation code (for payment matching)
-  async findByReconCode(code) {
-    const { data, error } = await supabase
-      .from("registrations")
-      .select("*")
-      .eq("reconciliation_code", code.toUpperCase())
-      .single();
-    if (error) throw error;
-    return data;
-  },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -1024,6 +1013,41 @@ export const admin = {
       .from("admin_users")
       .select("*")
       .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  // List the team relevant to one event: this org's org-level admins
+  // (event_id NULL) plus admins scoped to this specific event.
+  async listEventTeam(orgId, eventId) {
+    const { data, error } = await supabase
+      .from("admin_users")
+      .select("*")
+      .eq("org_id", orgId)
+      .or(`event_id.eq.${eventId},event_id.is.null`)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  // List all organizations (super_admin dashboard: org dropdown + list)
+  async listOrganizations() {
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("id, name, email, created_at")
+      .order("name", { ascending: true });
+    if (error) throw error;
+    return data;
+  },
+
+  // List platform-scope admins (super_admin + org_admin — event_id NULL)
+  // with their org name, for the super_admin dashboard.
+  async listPlatformAdmins() {
+    const { data, error } = await supabase
+      .from("admin_users")
+      .select("*, organizations(name)")
+      .is("event_id", null)
       .order("created_at", { ascending: false });
     if (error) throw error;
     return data;

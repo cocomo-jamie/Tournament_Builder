@@ -26,39 +26,55 @@ const AREA_NAME_SINGULAR = {
 
 /**
  * Create a full tournament from Wizard data.
- * Inserts into: organizations, events, event_dates, playing_areas,
- * volunteer_roles, sponsor_tiers, sponsors, gift_basket_items,
- * local_services, staff_contacts.
+ * Inserts into: organizations (super_admin only — see below), events,
+ * event_dates, playing_areas, volunteer_roles, sponsor_tiers, sponsors,
+ * gift_basket_items, local_services, staff_contacts.
  *
  * @param {Object} data - The Wizard's complete state object
- * @returns {Object} { orgId, eventId } - IDs of created records
+ * @param {Object} adminUser - The logged-in admin_users row (from useAuth()).
+ *   If adminUser.org_id is set (org_admin), the Wizard adds a new event to
+ *   that existing org instead of creating a new one — RLS migration 010
+ *   restricts organizations INSERT to super_admin, and an org_admin only
+ *   has one org to begin with. If adminUser.org_id is null (super_admin),
+ *   a brand-new organization is created as before.
+ * @returns {Object} { orgId, eventId } - IDs of created/reused records
  * @throws {Error} with descriptive message on failure
  */
-export async function createTournament(data) {
+export async function createTournament(data, adminUser) {
   try {
     // ── Step 1: Organization ──
-    const { data: org, error: orgError } = await supabase
-      .from("organizations")
-      .insert({
-        name: data.orgName,
-        email: data.orgEmail,
-        phone: data.orgPhone || null,
-        website: data.orgWebsite || null,
-        logo_url: data.orgLogoUrl || null,
-        style_ref_url: data.orgStyleRef || null,
-        brand: {
-          primary: data.primaryColor,
-          secondary: data.secondaryColor,
-          accent: data.accentColor,
-          dark: data.bgColor,
-          light: data.bgLight,
-        },
-        images: data.orgImages || [],
-      })
-      .select()
-      .single();
+    let orgId = adminUser?.org_id || null;
 
-    if (orgError) throw new Error(`Failed to create organization: ${orgError.message}`);
+    if (!orgId) {
+      // super_admin path: create a brand-new organization.
+      const { data: org, error: orgError } = await supabase
+        .from("organizations")
+        .insert({
+          name: data.orgName,
+          email: data.orgEmail,
+          phone: data.orgPhone || null,
+          website: data.orgWebsite || null,
+          logo_url: data.orgLogoUrl || null,
+          style_ref_url: data.orgStyleRef || null,
+          brand: {
+            primary: data.primaryColor,
+            secondary: data.secondaryColor,
+            accent: data.accentColor,
+            dark: data.bgColor,
+            light: data.bgLight,
+          },
+          images: data.orgImages || [],
+        })
+        .select()
+        .single();
+
+      if (orgError) throw new Error(`Failed to create organization: ${orgError.message}`);
+      orgId = org.id;
+    }
+    // else: org_admin path — reuse their existing org_id. Any org-info
+    // fields the Wizard's Organization step collected (name, branding,
+    // logo, etc.) are discarded here; editing org branding outside the
+    // Wizard is future work.
 
     // ── Step 2: Event ──
     const areaLabel = AREA_LABEL_PLURAL[data.sport] || "Playing Areas";
@@ -67,7 +83,7 @@ export async function createTournament(data) {
     const { data: event, error: eventError } = await supabase
       .from("events")
       .insert({
-        org_id: org.id,
+        org_id: orgId,
         name: data.eventName,
         sport: data.sport,
         sport_custom: data.sport === "other" ? data.sportOther : null,
@@ -273,7 +289,7 @@ export async function createTournament(data) {
         : Promise.resolve(),
     ]);
 
-    return { orgId: org.id, eventId: event.id };
+    return { orgId, eventId: event.id };
   } catch (err) {
     if (err instanceof Error) throw err;
     throw new Error("Failed to create tournament. Please try again.");

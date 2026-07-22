@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { createTournament } from "../services/createTournament";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 /* ═══════════════════════════════════════════════════════════
    SHARED UI COMPONENTS
@@ -388,6 +389,8 @@ const initialState = {
 
 export default function TournamentBuilderWizard() {
   const navigate = useNavigate();
+  const { adminUser } = useAuth();
+  const isOrgAdmin = !!adminUser?.org_id;
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initialState);
   const [copied, setCopied] = useState(false);
@@ -422,7 +425,9 @@ export default function TournamentBuilderWizard() {
 
   const canProceed = () => {
     switch (step) {
-      case 0: return data.orgName.trim() && data.orgEmail.trim();
+      // org_admins already belong to an org — these fields are discarded
+      // by createTournament() for that path, so don't block on them here.
+      case 0: return isOrgAdmin || (data.orgName.trim() && data.orgEmail.trim());
       case 1: return data.eventName.trim() && data.sport && data.eventDates[0]?.date && data.venueName.trim();
       default: return true;
     }
@@ -442,7 +447,7 @@ export default function TournamentBuilderWizard() {
     setCreating(true);
     setCreateError(null);
     try {
-      const result = await createTournament(data);
+      const result = await createTournament(data, adminUser);
       setCreateResult(result);
     } catch (err) {
       console.error("Tournament creation failed:", err);
@@ -455,6 +460,9 @@ export default function TournamentBuilderWizard() {
   /* ─── STEP 0: Organization ─── */
   const renderOrg = () => (
     <div className="space-y-6">
+      {isOrgAdmin && (
+        <Tip>You're adding a new event to your existing organization — the fields below are not used for this run (editing org branding outside the Wizard is coming later). Skip ahead to the Event step.</Tip>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <Field label="Organization Name" required><Input value={data.orgName} onChange={v => update("orgName", v)} placeholder="Ebb Tide Rugby Club" icon={Building2} /></Field>
         <Field label="Contact Email" required><Input value={data.orgEmail} onChange={v => update("orgEmail", v)} placeholder="info@yourclub.com" type="email" icon={Mail} /></Field>

@@ -18,6 +18,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { EventProvider, useEvent } from "./context/EventContext";
 import { AuthProvider } from "./context/AuthContext";
 import { LoadingSpinner, ErrorDisplay, NoEventDisplay } from "./components/LoadingSpinner";
+import ProtectedRoute, { useResolvedAuth } from "./components/ProtectedRoute";
 
 // Views
 import LandingPage from "./views/LandingPage";
@@ -28,6 +29,7 @@ import PlayerPortal from "./views/PlayerPortal";
 import TournamentWizard from "./tools/TournamentWizard";
 import Login from "./views/Login";
 import AcceptInvite from "./views/AcceptInvite";
+import SuperAdminDashboard from "./views/SuperAdminDashboard";
 
 // ─────────────────────────────────────────────────────────
 // EventShell: resolves eventId and wraps children in provider
@@ -56,6 +58,57 @@ function ConfigGate({ children }) {
   if (!config) return <LoadingSpinner message="Preparing tournament..." />;
 
   return children;
+}
+
+// ─────────────────────────────────────────────────────────
+// WizardRoute: gates /wizard to super_admin/org_admin only.
+// Not event-scoped (no :eventId, no EventProvider in the tree), so this
+// stays its own lightweight guard rather than reusing ProtectedRoute
+// directly — ProtectedRoute depends on useEvent(), which isn't available
+// here. It does share ProtectedRoute's `useResolvedAuth()` for the
+// session/adminUser resolution fix, so the two guards behave consistently.
+// ─────────────────────────────────────────────────────────
+
+function WizardRoute({ children }) {
+  const { session, adminUser, resolving } = useResolvedAuth();
+
+  if (resolving) return <LoadingSpinner />;
+  if (!session) return <Navigate to="/login?redirect=/wizard" replace />;
+  if (!adminUser) return <Navigate to="/login" replace />;
+
+  if (adminUser.role === "super_admin" || adminUser.role === "org_admin") {
+    return children;
+  }
+
+  if (adminUser.event_id) {
+    return <Navigate to={`/e/${adminUser.event_id}/admin`} replace />;
+  }
+
+  return <Navigate to="/login" replace />;
+}
+
+// ─────────────────────────────────────────────────────────
+// SuperAdminRoute: gates /super-admin to super_admin only
+// (adminUser.org_id === null). Non-super-admins are redirected —
+// never shown "Access Denied" — since nobody else should ever
+// legitimately land here. Mirrors WizardRoute: not event-scoped,
+// so it shares useResolvedAuth() rather than ProtectedRoute (which
+// depends on useEvent()).
+// ─────────────────────────────────────────────────────────
+
+function SuperAdminRoute({ children }) {
+  const { session, adminUser, resolving } = useResolvedAuth();
+
+  if (resolving) return <LoadingSpinner />;
+  if (!session) return <Navigate to="/login?redirect=/super-admin" replace />;
+  if (!adminUser) return <Navigate to="/login" replace />;
+
+  // super_admin is the only role with org_id === null.
+  if (adminUser.org_id === null) return children;
+
+  // Everyone else: send them where they belong, no "Access Denied".
+  if (adminUser.event_id) return <Navigate to={`/e/${adminUser.event_id}/admin`} replace />;
+  return <Navigate to="/login" replace />;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -144,14 +197,33 @@ export default function App() {
           element={
             <EventShell>
               <ConfigGate>
-                <AdminDashboard />
+                <ProtectedRoute>
+                  <AdminDashboard />
+                </ProtectedRoute>
               </ConfigGate>
             </EventShell>
           }
         />
 
+        {/* ── Super admin console (super_admin only, no event context) ── */}
+        <Route
+          path="/super-admin"
+          element={
+            <SuperAdminRoute>
+              <SuperAdminDashboard />
+            </SuperAdminRoute>
+          }
+        />
+
         {/* ── Wizard (no event context needed) ── */}
-        <Route path="/wizard" element={<TournamentWizard />} />
+        <Route
+          path="/wizard"
+          element={
+            <WizardRoute>
+              <TournamentWizard />
+            </WizardRoute>
+          }
+        />
 
         {/* ── Legacy route support (redirect old URLs) ── */}
         <Route path="/live" element={<LegacyRedirect path="/live" />} />

@@ -1,12 +1,13 @@
 // src/views/Login.jsx
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { LogIn, AlertCircle } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
@@ -18,7 +19,8 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email, password);
-      navigate("/"); // Pass 2 will redirect based on role
+      const redirect = searchParams.get("redirect");
+      navigate(redirect || "/");
     } catch (err) {
       setError(err.message || "Login failed. Check your email and password.");
     } finally {

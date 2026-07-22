@@ -11,11 +11,12 @@ import {
   CircleDot, ArrowUpDown, ExternalLink, Download,
   Undo2, Save, CreditCard as Card, BookOpen, Printer,
   Timer, Ban, SkipForward, Shuffle, LayoutGrid, Sliders,
-  BadgeCheck, QrCode, Scissors
+  BadgeCheck, QrCode, Scissors, UserPlus, Copy
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useEvent } from "../context/EventContext";
 import { useAuth } from "../context/AuthContext";
-import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog } from "../services/api";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi } from "../services/api";
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 import { useScreenLock } from "../hooks/useScreenLock";
 
@@ -1093,17 +1094,184 @@ function GameDayContext() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   TEAM CONTEXT — admin roster + event-scoped invites
+   (super_admin / org_admin only)
+   ═══════════════════════════════════════════════════════════ */
+const EVENT_ROLES = [
+  { id: "admin", label: "Admin — full event access" },
+  { id: "treasurer", label: "Treasurer — registrations & payments" },
+  { id: "referee", label: "Referee — game day match ops" },
+  { id: "volunteer_coord", label: "Volunteer Coordinator" },
+  { id: "control_desk", label: "Control Desk — court/bracket control" },
+];
+
+function TeamContext() {
+  const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
+  const B = config.brand;
+  const orgId = config?._raw?.org_id;
+
+  const [team, setTeam] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("admin");
+  const [inviting, setInviting] = useState(false);
+  const [result, setResult] = useState(null); // { kind: "success"|"error", msg, link? }
+
+  const refresh = async () => {
+    if (!orgId || !eventId) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const rows = await adminApi.listEventTeam(orgId, eventId);
+      setTeam(rows);
+    } catch (err) {
+      console.error("Failed to load team:", err);
+      setLoadError("Failed to load team members.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, [orgId, eventId]);
+
+  const handleInvite = async (e) => {
+    e.preventDefault();
+    setResult(null);
+    if (!email.trim()) {
+      setResult({ kind: "error", msg: "Email is required." });
+      return;
+    }
+    setInviting(true);
+    try {
+      const invite = await adminApi.createInvite(email.trim(), role, {
+        orgId,
+        eventId,
+        invitedBy: adminUser?.id,
+      });
+      const link = `${window.location.origin}/accept-invite?token=${invite.token}`;
+      setResult({ kind: "success", msg: "Invite created. Send this link:", link });
+      setEmail("");
+      await refresh();
+    } catch (err) {
+      console.error("Invite failed:", err);
+      setResult({ kind: "error", msg: err.message || "Failed to create invite." });
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const scopeLabel = (a) => {
+    if (a.org_id === null) return "Platform-wide";
+    if (a.event_id === null) return "Org-wide";
+    if (a.event_id === eventId) return "This event";
+    return "Other event";
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 20 }}>
+      {/* Invite form */}
+      <div style={S.card}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><UserPlus size={16} color={B.accent} /> Invite Team Member</h3>
+        <p style={{ fontSize: 12, color: "#ffffff50", marginBottom: 16 }}>Creates an invite scoped to this event. They set a password via the accept link.</p>
+        <form onSubmit={handleInvite} style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: 2, minWidth: 200 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>EMAIL</label>
+            <input type="email" style={S.input} value={email} onChange={e => setEmail(e.target.value)} placeholder="person@email.com" />
+          </div>
+          <div style={{ flex: 2, minWidth: 200 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>ROLE</label>
+            <select style={{ ...S.input, appearance: "none" }} value={role} onChange={e => setRole(e.target.value)}>
+              {EVENT_ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+          </div>
+          <button type="submit" disabled={inviting} style={S.btn(B.accent, B.dark)}><Send size={14} /> {inviting ? "Inviting..." : "Send Invite"}</button>
+        </form>
+        {result && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: result.kind === "error" ? "#ef444415" : "#22c55e15", border: `1px solid ${result.kind === "error" ? "#ef444440" : "#22c55e40"}` }}>
+            <p style={{ fontSize: 13, color: result.kind === "error" ? "#ff8a8a" : "#86efac" }}>{result.msg}</p>
+            {result.link && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                <code style={{ fontSize: 11, color: "#fff", background: "#00000040", padding: "6px 8px", borderRadius: 6, wordBreak: "break-all", flex: 1 }}>{result.link}</code>
+                <button type="button" onClick={() => navigator.clipboard?.writeText(result.link).catch(() => {})} style={{ background: "#ffffff15", border: "none", cursor: "pointer", color: "#fff", padding: 6, borderRadius: 6, flexShrink: 0 }} title="Copy link"><Copy size={14} /></button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Roster */}
+      <div style={S.card}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Shield size={16} color={B.accent} /> Current Team {!loading && <span style={{ fontSize: 12, color: "#ffffff40", fontWeight: 600 }}>({team.length})</span>}</h3>
+        {loading && <p style={{ fontSize: 13, color: "#ffffff50" }}>Loading team...</p>}
+        {loadError && <p style={{ fontSize: 13, color: "#ef4444" }}>{loadError}</p>}
+        {!loading && !loadError && team.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40" }}>No team members yet.</p>}
+        <div style={{ display: "grid", gap: 8 }}>
+          {team.map(a => (
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+              <div>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{a.display_name || a.email}</p>
+                <p style={{ fontSize: 12, color: "#ffffff50" }}>{a.email}</p>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={S.badge(B.accent)}>{(a.role || "").replace("_", " ")}</span>
+                <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 4 }}>{scopeLabel(a)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ROLE → TAB VISIBILITY
+   ═══════════════════════════════════════════════════════════ */
+const ROLE_TABS = {
+  super_admin: ["build", "publish", "gameday", "team"],
+  org_admin: ["build", "publish", "gameday", "team"],
+  admin: ["build", "publish", "gameday"],
+  treasurer: ["build"],
+  volunteer_coord: ["build"],
+  referee: ["gameday"],
+  control_desk: ["gameday"],
+};
+
+/* ═══════════════════════════════════════════════════════════
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
 export default function AdminDashboard() {
   const { config } = useEvent();
+  const { adminUser, signOut } = useAuth();
+  const navigate = useNavigate();
   const B = config.brand;
-  const [ctx, setCtx] = useState("build");
-  const ctxs = [
+
+  const allCtxs = [
     { id: "build", label: "Build", icon: Settings },
     { id: "publish", label: "Publish", icon: FileText },
     { id: "gameday", label: "Game Day", icon: Zap },
+    { id: "team", label: "Team", icon: Shield },
   ];
+
+  const visibleIds = ROLE_TABS[adminUser?.role] || ["build", "publish", "gameday"];
+  const ctxs = allCtxs.filter(c => visibleIds.includes(c.id));
+  const [ctx, setCtx] = useState(visibleIds[0]);
+
+  // If the role/visible tabs change (e.g. adminUser resolves after mount),
+  // keep the active tab valid for this role.
+  useEffect(() => {
+    if (!visibleIds.includes(ctx)) setCtx(visibleIds[0]);
+  }, [adminUser?.role]);
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/login");
+  };
+
+  const roleLabel = (adminUser?.role || "").replace("_", " ");
 
   return (
     <div style={{ minHeight: "100vh", background: B.dark, color: "#fff", fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -1116,7 +1284,7 @@ export default function AdminDashboard() {
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, background: B.primary + "30", display: "flex", alignItems: "center", justifyContent: "center" }}><Trophy size={16} color={B.primary} /></div>
-              <div><p style={{ fontSize: 14, fontWeight: 800 }}>ETRC Bocce Classic</p><p style={{ fontSize: 10, color: "#ffffff40" }}>Admin Dashboard</p></div>
+              <div><p style={{ fontSize: 14, fontWeight: 800 }}>{config.event?.name || "Admin Dashboard"}</p><p style={{ fontSize: 10, color: "#ffffff40" }}>Admin Dashboard</p></div>
             </div>
             <div style={{ height: 28, width: 1, background: "#ffffff15", margin: "0 8px" }} />
             <div style={{ display: "flex", gap: 4, background: "#ffffff06", borderRadius: 10, padding: 3 }}>
@@ -1132,8 +1300,14 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button style={{ background: "none", border: "none", cursor: "pointer", color: "#ffffff50" }}><ExternalLink size={16} /></button>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: B.secondary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>JH</div>
+            <div style={{ textAlign: "right" }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{adminUser?.display_name || adminUser?.email || "—"}</p>
+              {roleLabel && <p style={{ fontSize: 10, color: B.accent, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{roleLabel}</p>}
+            </div>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: B.secondary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>
+              {(adminUser?.display_name || adminUser?.email || "?").slice(0, 2).toUpperCase()}
+            </div>
+            <button onClick={handleSignOut} title="Sign out" style={{ background: "#ffffff10", border: "none", cursor: "pointer", color: "#ffffffaa", padding: "7px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}><LogOut size={14} /> Sign Out</button>
           </div>
         </div>
       </header>
@@ -1142,6 +1316,7 @@ export default function AdminDashboard() {
         {ctx === "build" && <BuildContext />}
         {ctx === "publish" && <PublishContext />}
         {ctx === "gameday" && <GameDayContext />}
+        {ctx === "team" && <TeamContext />}
       </main>
     </div>
   );
