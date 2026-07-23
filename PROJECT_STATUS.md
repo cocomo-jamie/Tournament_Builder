@@ -1,6 +1,8 @@
 # Tournament Builder Platform — Project Status & Handoff
 
-**Last updated:** 2026-07-22 (end of session — Pass 4 built + live-verified; migration 010 PII-exposure bug found & fixed)
+**Last updated:** 2026-07-23 (end of session — deployed to Netlify + live-verified; migration 010 found to have never actually applied, fixed live tonight; major architecture decisions made for marketing page / `/your_events` / identity model — not yet built, see bottom sections)
+
+**Live URL:** https://cocomo-events.netlify.app (Git-linked to `main`, CI/CD active — every push auto-deploys)
 
 ## Quick Context
 A multi-sport charity tournament management platform. Originally scoped for an Ebb Tide Rugby Club (ETRC) bocce tournament supporting Elder Fraud Prevention, generalized to support any organization running any sport's charity tournament.
@@ -20,26 +22,30 @@ A multi-sport charity tournament management platform. Originally scoped for an E
 | 4: Auth layer | ✅ Done, live-verified | Login, invite-based signup, role-based route protection, Team management UI, super-admin org creation — all now confirmed by live manual testing (2026-07-22). Team UI + super-admin org creation had been **falsely documented as done** before existing in the codebase; built in Pass 4 and click-through-verified this session |
 | Registrations panel overhaul | ✅ Done | Independent payment/approval checkboxes, audit trail, single-admin lock queue |
 | **4b: Match overrun policy** | 📋 Spec written, not built | See `FEATURE_SPEC_match_overrun.md` — depends on Referee role (done) being exercised in Game Day UI (not built) |
-| **Pass 3: RLS tightening** | ✅ Done | Migration 010 — see below |
+| **Pass 3: RLS tightening** | ✅ Actually done as of 2026-07-23 | Migration 010 was marked done on 2026-07-22 but **had never been applied to the live DB** — 004/005 were still wide open. Found via live behavioral testing 2026-07-23, fixed by running 010+011 in the SQL Editor, re-verified clean. See "Session Update — 2026-07-23" below. |
 | **Pass 3b: Wizard org-scoping fast-follow** | ✅ Done | `createTournament.js`/`TournamentWizard.jsx`/`App.jsx` — see below |
 | **Pass 3c: Real ProtectedRoute + admin dashboard gating** | ✅ Done | `ProtectedRoute.jsx` created; `/e/:eventId/admin` now actually gated — see below |
 | **Pass 4: Admin UI gaps (super-admin, Team tab, identity, logout)** | ✅ Done, live-verified | `SuperAdminDashboard.jsx` + `/super-admin` route, Team tab + role→tab gating, header identity + logout — click-through-verified 2026-07-22, see below |
 | **Migration 010 fix (registrations public-read PII exposure)** | ✅ Fixed live + migration 011 | 010's DROP POLICY used the wrong policy name; public PII was readable with the anon key until tonight's manual fix — see below |
 | 5: Serverless functions (OTP + Stripe) | Not started | Player Portal OTP shows graceful error; no backend exists |
 | 6: Artifact generation engine | Not started | Publish tab has hardcoded placeholder data |
-| 7: Deployment / hosting | Not started | App only runs via local `npm run dev` |
+| 7: Deployment / hosting | ✅ Done, live-verified | Netlify, Git-linked CI/CD → https://cocomo-events.netlify.app. See "Deployment — Live" below. |
 | 8: Style extraction | Not started | Lower priority enhancement |
 
 ---
 
-## ✅ Pass 3: RLS Org/Event Scoping — Done (Migration 010)
+## ✅ Pass 3: RLS Org/Event Scoping — Done as of 2026-07-23 (see correction below)
+
+**This section originally claimed migration 010 was applied and verified on 2026-07-22. That was false — see "Session Update — 2026-07-23" further down for what was actually found and how it was fixed. The description of what 010's SQL *does* below is accurate (confirmed by reading the file); what was wrong was the claim that it had been *run* against the live database.**
 
 Migration 010 (`010_rls_org_event_scoping.sql`) replaced every blanket `"Admin full X"` policy (previously `auth.uid() IN (SELECT id FROM admin_users WHERE active = true)` — any active admin, any org, any event) with real scoping via three new `SECURITY DEFINER` helper functions: `is_super_admin()`, `is_org_admin_for(org_id)`, `is_event_admin_for(event_id)`.
 
-It also retired the temporary public policies opened during Step 3/4 development:
+It also retires the temporary public policies opened during Step 3/4 development:
 - **004** public INSERT (10 wizard tables) → now requires an authenticated org_admin/super_admin (org-level) or event admin (event-scoped tables).
 - **005** public SELECT on `organizations` → narrowed (not removed): public read now requires the org to own at least one non-draft event, since `configTransformer.js` reads `event.organizations.brand`/`.logo_url` for public-site branding via the `events.get()` embed. `events` reverted to its original `status != 'draft'` scoping.
 - **006** public SELECT on `registrations` (the PII exposure — name/email/phone readable by anyone with the anon key) → removed entirely. The recon-code lookup feature was removed rather than replaced (see below), so there is no remaining legitimate public read path on this table.
+
+**As of 2026-07-23, all of the above is confirmed live** — see the behavioral before/after table in "Session Update — 2026-07-23."
 
 **Flagged for future exploration:** per-role table restrictions within an org/event scope (e.g. treasurer limited to payments, referee limited to game-day tables) — deferred from Pass 3. Every scoped admin currently has full CRUD on all tables within their org/event boundary; narrowing this needs product definition of exactly what each role should be blocked from before it's worth encoding in RLS.
 
@@ -121,6 +127,74 @@ This needs real design discussion (what exactly each Game Day role can see and d
 ### Process note — "documented as done" must mean "verified," not "code written"
 
 This session (and the three before it) repeatedly found things `PROJECT_STATUS.md` documented as done that weren't actually in the codebase or weren't live: route protection, the `?redirect=` param, the Team tab, the Super Admin view, and the registrations public-read policy drop. **Every one of these was caught through direct live testing, not code review.** Going forward, "done" in this doc should mean *manually verified against the running app / live DB*, not *code written and compiling*. This instruction has been added to recent CC handoffs and should keep being followed.
+
+---
+
+## 🔴 Session Update — 2026-07-23: Migration 010 had never actually run (found + fixed, live-verified)
+
+**Sixth recurrence of "documented as done" ≠ actually done.** Before starting deployment work, this session re-verified the Pass 3 RLS claim from scratch — a deliberate choice given the project's track record, not routine. No service-role key or DB connection string exists in the Claude Code environment (only the anon key; no `supabase`/`psql` CLI access), so verification was done **behaviorally against live PostgREST** rather than by reading `pg_policies` — arguably a stronger test, since it exercises the same path a real anonymous client would.
+
+**Finding:** migration 010 had never been applied to the live database at all. This is a different failure than what migration 011's changelog described (011 claimed 010 used the wrong policy name on the registrations DROP). Inspecting the 010 file directly showed it already has the *correct* registrations policy name — the file had been edited after the fact, and its own changelog comment didn't match its current content. The real gap: Part E of 010 (retiring 004/005/006) simply never executed against production.
+
+**Before/after, tested with the anon key only:**
+
+| Check | Before (tonight) | After (010 + 011 run via SQL Editor) |
+|---|---|---|
+| Anon insert, 10 wizard tables (004) | `23502` — RLS let the write through, only blocked by a missing-column error ❌ | `42501` — RLS blocks it ✅ |
+| Anon read `events` (005) | 3 rows returned, all `status: draft` ❌ | 0 rows ✅ |
+| Anon read `organizations` (005) | 2 rows returned ❌ | 0 rows ✅ |
+| Anon read `registrations` (006, PII) | 0 rows ✅ (already fixed by hand on 2026-07-22) | 0 rows ✅ (unchanged) |
+| Anon insert `registrations` (control — should stay open) | `23502` | `23502` (unchanged, as expected) |
+
+**Fix applied:** 010 and 011 run manually via the Supabase SQL Editor dashboard, 2026-07-23 (still no CLI/service-role access from the Claude Code environment — this remains a manual step; see Known Issues).
+
+**New finding surfaced by the fix, not yet resolved:** every event in the live DB is currently `status = 'draft'`. With the read policy now correctly enforced, an anonymous visit to any event's public page fails — confirmed live at `https://cocomo-events.netlify.app/e/17deda12-.../`, which threw a raw Postgrest error (`PGRST116 — Cannot coerce the result to a single JSON object`) instead of a friendly "not published yet" message. Root cause: `events.get()` uses `.single()`, and RLS silently filters the draft row to zero rows rather than erroring, so `.single()` throws. **There is currently no UI path to publish an event** — the test event (`17deda12-50f9-4c6b-941b-f1d75423d284`) was published manually via `UPDATE events SET status = 'published' WHERE id = ...` in the SQL Editor to unblock the deploy smoke test. Both the missing "publish" UI and the ungraceful error need fixing — see Known Issues.
+
+---
+
+## ✅ Deployment — Live (2026-07-23)
+
+- **Host:** Netlify, Git-linked to `cocomo-jamie/Tournament_Builder` on `main` — CI/CD active, every push to `main` triggers an auto-deploy.
+- **URL:** https://cocomo-events.netlify.app
+- **`netlify.toml`** added — build command `npm run build`, publish dir `dist`, SPA redirect (`/* → /index.html`, status 200) so deep routes (`/live`, `/tv`, `/captain`, `/e/:eventId/admin`) don't 404 on direct load/refresh.
+- **Real deploy bug caught and fixed:** the first deploy 404'd on every deep route because `netlify.toml` existed only as a local file and had never been committed — the Git-triggered build never saw it. Committed (`609f904`), Netlify auto-rebuilt, re-verified all routes return 200.
+- **Env vars set** on the Netlify site: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_EVENT_ID` (this third one isn't in `.env.example` but is read by `App.jsx` for default routing — **note:** this var's entire purpose goes away once the marketing-page/`/your_events` architecture below is built, since root will no longer resolve to a single hardcoded event).
+- **Supabase Auth URL Configuration** updated: `https://cocomo-events.netlify.app` added to both Site URL and Redirect URLs (required for invite/`AcceptInvite.jsx` links to work in production — this is a dashboard-only step, no CLI path).
+- **Smoke test:** passed manually in-browser (not just `curl`) after the draft-event fix above — landing page renders live Supabase data, no console/CORS errors observed.
+- **Known, expected gaps in prod right now (not bugs):** Player Portal OTP and Stripe both show graceful errors — Step 5 (serverless functions) is still not started.
+
+---
+
+## 🗺️ Architecture Decisions — 2026-07-23 (decided, none of this is built yet)
+
+A significant restructuring of the app's public/authenticated surface was scoped out tonight. None of it is implemented — this is a design record for the next build session, not a status update.
+
+**New route map:**
+- **`/` (root)** — becomes a platform-level **marketing/signup page**. Explains what Tournament Builder does (tournament design, registrations, volunteer management, game day tools, TV display, sponsor management, digital gift management) and shows **static/dummy pricing** ($1000 CAD/1 event, $750/2, $500/3, or $20/mo + $100/event, "12 months full package for early adopters" framing). **No real checkout, no Stripe, no billing logic this pass** — pricing is display-only content; the actual payment/billing model is explicitly deferred to a dedicated future session (see Payments below). "Log in" from here goes to `/your_events`.
+- **`/your_events`** (new, doesn't exist yet) — authenticated landing page. **Any admin role** (super_admin, org_admin, and event-scoped roles) lands here and sees the views/tools relevant to their scope. First-time users get an onboarding tour and are prompted to set up their first event; this needs a persisted "has completed onboarding" flag (per org or per admin_user — not yet decided which).
+- **`/e/:eventId`** (existing event public pages) — **this is where `/`'s current behavior moves to.** `VITE_EVENT_ID`-based root routing goes away entirely.
+
+**Hard constraint — do not accidentally gate the public event pages:** `/e/:eventId` must remain fully reachable with no auth, regardless of login state. The safe pattern: `/your_events` should **link out** to the same public `/e/:eventId` URL for a user's associated tournaments rather than rendering a separate authenticated view of the same data — one URL, two entry points, never a second gated copy. Explicit regression check for the next smoke test: log in, view `/e/:eventId`, log out, confirm the identical page still loads.
+
+**Non-admin users (players, captains, referees, volunteers):** don't log in via `/your_events` in the admin sense. They follow a **direct link to their specific tournament's public page** as today, OR, if they have some persistent identity in the system, can authenticate via the marketing page to see a list of tournaments they're associated with, click through to the tournament's public page, and from there see whichever views they're authorized for (e.g. captain score entry) **plus the list of digital artifacts they're entitled to for that tournament.** This depends entirely on the identity model below, which is not yet designed.
+
+**Branding — "same bones, different skin":** `/e/:eventId` pages already pull per-org branding (colors/logo/fonts) from Supabase per event. The marketing page and `/your_events` have no single org to brand around (a super_admin's `/your_events` may span many orgs with different brand configs), so they need their **own platform-level identity** — Tournament Builder's own colors/type — while sharing enough of the underlying component/layout system that moving from marketing → `/your_events` → `/e/:eventId` doesn't feel like leaving the app. Platform shell has its own skin; each event page layers its own skin on the same bones.
+
+**Payments — explicitly punted, but the business question is now on record:**
+- This pass: static/dummy pricing display only, as above.
+- A real future session needs to resolve, **before schema/build work starts**, whether the platform:
+  (a) lets each org connect their own payment processor (Stripe/PayPal/e-Transfer) so registration/donation money goes directly to the org, or
+  (b) centralizes collection (Cocomo collects, disburses to orgs on a schedule, potentially with in-app upsell credit against an org's balance).
+- **(b) is a materially bigger lift than (a).** Holding and disbursing other parties' funds is generally regulated (money transmission / payment facilitator rules, which vary by jurisdiction), which is why platforms doing this typically build on something like Stripe Connect rather than a custom balance/ledger system — and even Connect's standard model is a straight per-transaction split, not a hold-and-disburse-on-our-schedule wallet, which is what was described as the preferred direction tonight. There's also a charitable-solicitation angle (donation terminology/receipting) layered on top given this platform's fundraising use case.
+- **This needs actual legal/accounting advice before a schema is built, not just an architecture decision made here.** Flagged plainly so it isn't quietly decided by default via whatever's easiest to code.
+
+**Identity & entitlements — direction set, not designed:**
+- Today, only `admin_users` roles have real login (Supabase Auth). Captains authenticate via phone OTP. Volunteers, non-captain players, and referees/officials have **no persistent identity or access mechanism** at all currently.
+- Direction agreed: introduce a **persistent person/contact identity**, separate from per-event participation rows, that `players`, volunteers, and a new `officials` table would all reference — this is what would let "the same human across 3 tournaments and 2 orgs" actually be one entity instead of three disconnected rows, and is the real prerequisite for the "click a link, see all my tournaments" flow described above.
+- Planned schema direction (not yet built): expand `players` to capture waiver/fee/role status per registration; formalize an approved-volunteers table (event-scoped or reusable per org); add a new `officials` table (referees, court judges, etc.) with a searchable-or-custom "type" field, distinct from `staff_contacts` (logistics) and distinct from the `admin_users.referee` role (dashboard access ≠ officiating role).
+- **Still open:** the actual matching/auth mechanism for non-admin users (phone OTP extended to everyone? A per-person magic link? Something else?) and how matches are made/confirmed (phone vs. email, handling typos or a second email address, auto-link vs. confirm-before-linking). Not solved — flagged for the next design pass.
+
+**Entitlements / CRUD matrix — explicitly deferred ("tomorrow problem"):** every admin role can currently create tournaments via the Wizard, and CRUD scope needs a real matrix (role × resource × operation × org/event scope) rather than the current ad hoc `ROLE_TABS`/RLS-function checks. The scope primitives already exist (`is_super_admin()`, `is_org_admin_for()`, `is_event_admin_for()`) — the matrix just needs to be designed and then mapped onto them. Not started.
 
 ---
 
@@ -224,16 +298,27 @@ Tournament_Builder/
 3. **Match engine stubs** — Generate Bracket, Assign Areas, and Reassign Captain in Game Day currently show "not yet implemented" messages; they need a match-selection UI that wasn't in scope for the data-driven refactor.
 4. **Fan engagement data** (`FAN_COUNTS`, `SPONSOR_QUIZ`, `PHOTO_ENTRIES` in LivePage) — still hardcoded; no DB tables exist for these yet.
 5. **BracketView round labels** — shows "Round 1/2/3" instead of "Quarterfinal/Semifinal/Final"; TODO comment left in code to derive proper labels from `bracket.total_rounds`.
+6. **No UI path to publish an event.** Every event is created as `status = 'draft'` by the Wizard and nothing in the app flips it to `published`. Currently requires a manual `UPDATE events SET status = 'published' ...` in the Supabase SQL Editor. Found 2026-07-23 while smoke-testing deployment.
+7. **Unpublished/nonexistent event IDs throw a raw Postgrest error to the browser** (`PGRST116 — Cannot coerce the result to a single JSON object`) instead of a friendly "not found / not published yet" page. Root cause: `events.get()` uses `.single()`, and RLS correctly returns zero rows for a draft event to an anonymous request, which `.single()` treats as an error rather than a valid "not visible" state.
+8. **No service-role key or DB connection string available in the Claude Code environment.** Verifying `schema_migrations` state, and applying any future migration, currently requires manual action via the Supabase dashboard SQL Editor rather than CLI/psql from that environment. Deliberate tradeoff to keep a service-role key out of the coding agent's reach — revisit if migration work becomes frequent enough to be worth it.
+9. **No persistent person identity across registrations.** A player/volunteer/official who participates in multiple events or orgs currently exists as multiple disconnected rows, not one entity — see "Architecture Decisions — 2026-07-23" above.
+10. **No auth/access mechanism for non-admin users** beyond captain phone OTP — volunteers, non-captain players, and referees/officials have no way to authenticate or view "their" tournaments. Direction is set (see above) but not designed or built.
+11. **No entitlements/CRUD matrix.** Every admin role currently has full CRUD within its RLS-defined scope; there's no product-defined restriction of e.g. treasurer-to-payments-only or referee-to-game-day-only (this overlaps with, and should probably be resolved together with, issue #1 above).
+12. **No billing/payment schema of any kind.** Marketing page pricing is display-only. Centralized-vs-decentralized payment collection is an open business/legal question (see Architecture Decisions above) that needs to be resolved before any billing schema work starts.
 
 ---
 
 ## Proposed Schedule (Next Session)
 
-1. **Step 7 — Deployment**: get the app live on a real host (Vercel is the natural fit for Vite) with production env vars, so there's something real to test against instead of only local dev.
-2. **Step 5 — Serverless functions**: Twilio (OTP SMS) and Stripe (payments) — needed for Player Portal captain login and real payment processing to actually function.
-3. **Step 6 — Artifact generation engine**: real schedule/run-sheet/resource-directory generation for the Publish tab.
+Deployment (formerly item 1 here) is done — see "Deployment — Live" above. Priorities reordered given tonight's architecture decisions:
 
-Steps 5–6 are bigger lifts; reserved Fable 5 credits ($140) may be worth spending there per earlier discussion, once Sonnet+CC has the foundation (Pass 3 + deployment) solid.
+1. **Publish-event UI + graceful not-found/not-published handling** — small, unblocks real usage; two of tonight's Known Issues (#6, #7) and worth fixing before anything else since it affects every other test going forward.
+2. **Marketing page (`/`) + `/your_events` build-out** — per "Architecture Decisions — 2026-07-23" above. Suggest sequencing as: (a) marketing page with static pricing content, (b) `/your_events` for admin roles only first (reuses existing role data), (c) branding system split (platform skin vs. event skin), (d) non-admin identity/link mechanism last, since it's the least-defined piece and has real open design questions.
+3. **Entitlements/CRUD matrix** — design doc first (role × resource × operation × scope), then map onto existing RLS scope functions. Explicitly deferred by the user as a "tomorrow problem," not urgent, but should land before the identity work in step 2(d) makes the permission surface bigger.
+4. **Step 5 — Serverless functions**: Twilio (OTP SMS) and Stripe (payments) — needed for Player Portal captain login and real payment processing to actually function. **Note:** "Stripe" here is event-level payments only (a team paying its entry fee) — this is a different, smaller thing than the org-level SaaS billing question raised in Architecture Decisions, which needs a legal/business decision first and is not in scope for this step.
+5. **Step 6 — Artifact generation engine**: real schedule/run-sheet/resource-directory generation for the Publish tab.
+
+Steps 4–5 are bigger lifts; reserved Fable 5 credits ($140) may be worth spending there per earlier discussion, once the platform-shell work (item 2) has a stable foundation to build artifact generation against.
 
 ---
 
