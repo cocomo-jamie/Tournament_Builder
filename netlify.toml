@@ -1,0 +1,11 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback: React Router owns client-side routing, so every non-asset
+# path must serve index.html (otherwise direct nav / refresh on routes like
+# /e/:eventId/admin, /live, /captain returns a 404 on Netlify).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
