@@ -752,7 +752,7 @@ export default function LivePage() {
 `, [B.accent, B.dark, B.primary]);
 
   // ── Realtime data ──
-  const { teams: rawTeams } = useRealtimeTeams(eventId);
+  const { teams: rawTeams } = useRealtimeTeams(eventId, { publicSafe: true });
   const { matches: rawMatches } = useRealtimeMatches(eventId);
   const { pools: rawPools } = useRealtimeStandings(eventId);
   const { data: rawAreas } = useRealtimeAreas(eventId);

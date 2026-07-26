@@ -18,7 +18,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { EventProvider, useEvent } from "./context/EventContext";
 import { AuthProvider } from "./context/AuthContext";
 import { LoadingSpinner, ErrorDisplay, NoEventDisplay, EventNotPublishedDisplay } from "./components/LoadingSpinner";
-import ProtectedRoute, { useResolvedAuth } from "./components/ProtectedRoute";
+import AdminGate, { useResolvedAuth } from "./components/ProtectedRoute";
 
 // Views
 import LandingPage from "./views/LandingPage";
@@ -64,9 +64,9 @@ function ConfigGate({ children }) {
 // ─────────────────────────────────────────────────────────
 // WizardRoute: gates /wizard to super_admin/org_admin only.
 // Not event-scoped (no :eventId, no EventProvider in the tree), so this
-// stays its own lightweight guard rather than reusing ProtectedRoute
-// directly — ProtectedRoute depends on useEvent(), which isn't available
-// here. It does share ProtectedRoute's `useResolvedAuth()` for the
+// stays its own lightweight guard rather than reusing AdminGate
+// directly — AdminGate depends on useEvent(), which isn't available
+// here. It does share AdminGate's `useResolvedAuth()` for the
 // session/adminUser resolution fix, so the two guards behave consistently.
 // ─────────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ function WizardRoute({ children }) {
 // (adminUser.org_id === null). Non-super-admins are redirected —
 // never shown "Access Denied" — since nobody else should ever
 // legitimately land here. Mirrors WizardRoute: not event-scoped,
-// so it shares useResolvedAuth() rather than ProtectedRoute (which
+// so it shares useResolvedAuth() rather than AdminGate (which
 // depends on useEvent()).
 // ─────────────────────────────────────────────────────────
 
@@ -197,11 +197,9 @@ export default function App() {
           path="/e/:eventId/admin"
           element={
             <EventShell>
-              <ConfigGate>
-                <ProtectedRoute>
-                  <AdminDashboard />
-                </ProtectedRoute>
-              </ConfigGate>
+              <AdminGate>
+                <AdminDashboard />
+              </AdminGate>
             </EventShell>
           }
         />

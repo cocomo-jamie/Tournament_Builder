@@ -50,6 +50,16 @@ Authenticated landing page for **any admin role** (super_admin, org_admin, event
 
 ---
 
+## Design note: single entry point for login (added 2026-07-25)
+
+The current per-route login redirect (`?redirect=...`) works correctly — verified live during the admin-route-ordering bug fix — but it's fragmented by design: every protected route independently decides to bounce an unauthenticated visitor to `/login`. That's fine as a fallback, but it's not the *primary* login experience once this spec's routes exist.
+
+**Once the marketing page and `/your_events` are built, they should become the front door.** The expectation: a visitor lands on `/`, clicks "Log in," authenticates once, and lands on `/your_events` — from there, every event they have access to is one click away via links to `/e/:eventId/admin`, already carrying an authenticated session. The scattered per-route `?redirect=` bounce becomes the edge case (someone hits a deep admin link directly, e.g. from a bookmark or a shared URL, while logged out) rather than the primary path — it should still work when that happens, but it's no longer the main way people log in.
+
+**Practical implication for Part 2's build:** `MarketingPage.jsx`'s "Log in" action and `Login.jsx` itself should route consistently to `/your_events` post-auth (not back to whatever arbitrary page prompted the login, unless that arbitrary page was itself the reason they logged in — the existing `?redirect=` behavior stays correct for that case, this is about what the *default*, no-redirect-param login lands on).
+
+---
+
 ## Part 3 — routing cleanup
 
 - Remove `VITE_EVENT_ID` entirely once `/` no longer needs a default-event fallback — it was already flagged in the Deployment section as existing only to support the old root-redirect behavior

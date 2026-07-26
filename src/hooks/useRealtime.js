@@ -180,11 +180,21 @@ export function useRealtimeAreas(eventId) {
 }
 
 /**
- * Team data — used by live page, TV display, admin
+ * Team data — used by live page, TV display, admin.
+ *
+ * `publicSafe: true` (anonymous/public views — LivePage) selects the
+ * `players_public` view instead of the base `players` table, so phone/
+ * email never leave the server for a roster nobody logged in ever
+ * authorized. Admin (AdminDashboard) keeps the full `players` table via
+ * the default, since it legitimately needs contact info (e.g. captain
+ * phone on the check-in list). Aliased back to `players` in the select
+ * string so callers don't need to know which source it came from.
  */
-export function useRealtimeTeams(eventId) {
+export function useRealtimeTeams(eventId, { publicSafe = false } = {}) {
   const { data, loading } = useRealtimeTable("teams", eventId, true, {
-    select: "*, players(*), pool:pools(name)",
+    select: publicSafe
+      ? "*, players:players_public(*), pool:pools(name)"
+      : "*, players(*), pool:pools(name)",
     orderBy: "name",
   });
 

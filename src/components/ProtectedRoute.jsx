@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useEvent } from "../context/EventContext";
-import { LoadingSpinner } from "./LoadingSpinner";
+import { LoadingSpinner, ErrorDisplay } from "./LoadingSpinner";
 
 /**
  * Resolves { session, adminUser, resolving }.
@@ -56,7 +56,7 @@ export function useResolvedAuth() {
   return { session, adminUser, resolving: loading || checking };
 }
 
-function AccessDenied({ message }) {
+export function AccessDenied({ message }) {
   return (
     <div
       style={{
@@ -80,12 +80,49 @@ function AccessDenied({ message }) {
   );
 }
 
-export default function ProtectedRoute({ children }) {
+/**
+ * AdminGate: combined auth + config gate for /e/:eventId/admin.
+ *
+ * This route needs auth resolved *before* a "config not found" result can
+ * be trusted. useEventConfig() fires its fetch as soon as EventProvider
+ * mounts, which can race AuthContext's session restore — an admin who is
+ * genuinely authenticated can have their very first request go out
+ * anonymously, get filtered to zero rows by RLS's public policy (draft
+ * events are `status = 'draft'`, hidden from anon reads), and land here
+ * with `notFound: true` despite the "Admin full events" policy being
+ * additive and perfectly willing to return the row once the request
+ * actually carries their session.
+ *
+ * A plain ConfigGate → ProtectedRoute split can't fix this: ConfigGate
+ * commits to rendering the public "not published" branch before
+ * ProtectedRoute (further down the tree) ever mounts to redirect to
+ * login. So this gate resolves auth first, and if config came back
+ * notFound, retries once now that the client has a session attached
+ * before deciding whether that's "log in" / "wrong scope" / "doesn't
+ * exist" — never the public "not published" message, which is reserved
+ * for the anonymous public route.
+ */
+export default function AdminGate({ children }) {
   const { session, adminUser, resolving } = useResolvedAuth();
-  const { config, eventId } = useEvent();
+  const { config, eventId, loading, error, notFound, refetch } = useEvent();
   const location = useLocation();
+  const retriedRef = useRef(false);
 
-  if (resolving) return <LoadingSpinner />;
+  // Reset the one-shot retry guard when navigating to a different event.
+  useEffect(() => {
+    retriedRef.current = false;
+  }, [eventId]);
+
+  // Auth resolved to a real admin, but the (possibly anonymous) initial
+  // fetch came back empty — retry once now that the session is attached.
+  useEffect(() => {
+    if (!resolving && session && adminUser && notFound && !loading && !retriedRef.current) {
+      retriedRef.current = true;
+      refetch();
+    }
+  }, [resolving, session, adminUser, notFound, loading, refetch]);
+
+  if (resolving || loading) return <LoadingSpinner />;
 
   if (!session) {
     return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname)}`} replace />;
@@ -94,6 +131,23 @@ export default function ProtectedRoute({ children }) {
   if (!adminUser) {
     // Authenticated, but no admin_users row at all — not an admin.
     return <Navigate to="/login" replace />;
+  }
+
+  if (error) return <ErrorDisplay error={error} onRetry={refetch} />;
+
+  // Still nothing after the authenticated retry: this is a real access
+  // problem (wrong org/event scope, or a bad eventId), not "not public
+  // yet" — that message is for anonymous visitors on the public route.
+  if (notFound || !config) {
+    if (adminUser.org_id === null) {
+      // super_admin's policy has no status/scope restriction at all —
+      // if they still can't see it, the event genuinely doesn't exist.
+      return <AccessDenied message="This event doesn't exist." />;
+    }
+    if (adminUser.event_id && adminUser.event_id !== eventId) {
+      return <Navigate to={`/e/${adminUser.event_id}/admin`} replace />;
+    }
+    return <AccessDenied message="You don't have access to this event, or it doesn't exist." />;
   }
 
   // super_admin: org_id is NULL, sees every event.
