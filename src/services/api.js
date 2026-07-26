@@ -218,16 +218,19 @@ export const registrations = {
 // ═══════════════════════════════════════════════════════════
 
 export const teams = {
-  // Create team from confirmed registration
-  async createFromRegistration(registration) {
+  // Create team at registration-submission time (not post-approval —
+  // see FEATURE_SPEC_team_roster_registration.md). Replaces the old,
+  // never-wired createFromRegistration().
+  async create(eventId, registrationId, { name, slogan, logoUrl } = {}) {
     const { data, error } = await supabase
       .from("teams")
       .insert({
-        event_id: registration.event_id,
-        registration_id: registration.id,
-        name: registration.team_name,
-        slogan: registration.team_slogan,
-        logo_url: registration.team_logo_url,
+        event_id: eventId,
+        registration_id: registrationId,
+        name,
+        slogan: slogan || null,
+        logo_url: logoUrl || null,
+        status: "pending",
       })
       .select()
       .single();
@@ -299,22 +302,44 @@ export const teams = {
 // ═══════════════════════════════════════════════════════════
 
 export const players = {
-  async createBatch(teamId, eventId, playerList) {
-    // playerList = [{ name, email, phone, is_captain, shirt_size, dietary_needs, sort_order }]
-    const rows = playerList.map((p) => ({
+  async createBatch(teamId, eventId, registrationId, playerList) {
+    // playerList = [{ name, email, phone, is_captain, is_coach, shirt_size, dietary_needs }]
+    // in final roster order — sort_order is derived from array position
+    // (0 = captain), per players.sort_order's existing convention.
+    const rows = playerList.map((p, i) => ({
       team_id: teamId,
       event_id: eventId,
+      registration_id: registrationId,
       full_name: p.name,
       email: p.email || null,
       phone: p.phone || null,
       is_captain: p.is_captain || false,
+      is_coach: p.is_coach || false,
       shirt_size: p.shirt_size || null,
       dietary_needs: p.dietary_needs || null,
-      sort_order: p.sort_order || 0,
+      sort_order: i,
+      status: "pending",
+      self_registered: false,
     }));
     const { data, error } = await supabase.from("players").insert(rows).select();
     if (error) throw error;
     return data;
+  },
+
+  // Admin: batch update players (per-player approve/reject) — mirrors
+  // registrations.batchUpdate's shape/pattern. Each status write here
+  // fires the recompute_team_status() trigger (migration 016), which
+  // keeps teams.status in sync — nothing on the client needs to
+  // recompute team status itself.
+  async batchUpdate(updates) {
+    // updates = [{ id, status }]
+    const promises = updates.map(({ id, ...fields }) =>
+      supabase.from("players").update(fields).eq("id", id)
+    );
+    const results = await Promise.all(promises);
+    const errors = results.filter((r) => r.error);
+    if (errors.length) throw new Error(`${errors.length} updates failed`);
+    return results.map((r) => r.data);
   },
 
   async getByPhone(eventId, phone) {

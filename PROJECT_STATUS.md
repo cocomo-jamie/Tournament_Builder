@@ -1,6 +1,6 @@
 # Tournament Builder Platform — Project Status & Handoff
 
-**Last updated:** 2026-07-23 (end of session — deployed to Netlify + live-verified; migration 010 found to have never actually applied, fixed live tonight; major architecture decisions made for marketing page / `/your_events` / identity model — not yet built, see bottom sections)
+**Last updated:** 2026-07-25 (end of session — publish-flow fixed and live-verified; live PII exposure on `players` found and fixed; team roster registration with per-player approval built end-to-end and live-verified, including two real bugs found and fixed during testing; identity work Phase 1 built, Phases 2-4 not started)
 
 **Live URL:** https://cocomo-events.netlify.app (Git-linked to `main`, CI/CD active — every push auto-deploys)
 
@@ -27,6 +27,10 @@ A multi-sport charity tournament management platform. Originally scoped for an E
 | **Pass 3c: Real ProtectedRoute + admin dashboard gating** | ✅ Done | `ProtectedRoute.jsx` created; `/e/:eventId/admin` now actually gated — see below |
 | **Pass 4: Admin UI gaps (super-admin, Team tab, identity, logout)** | ✅ Done, live-verified | `SuperAdminDashboard.jsx` + `/super-admin` route, Team tab + role→tab gating, header identity + logout — click-through-verified 2026-07-22, see below |
 | **Migration 010 fix (registrations public-read PII exposure)** | ✅ Fixed live + migration 011 | 010's DROP POLICY used the wrong policy name; public PII was readable with the anon key until tonight's manual fix — see below |
+| **Publish-event flow** | ✅ Done, live-verified | Draft events no longer throw a raw error publicly; `EventStatusCard` in Publish tab lets org_admin/admin/super_admin flip status. A real race-condition bug (config fetch firing before auth session restored) was found and fixed — see below. |
+| **Players PII exposure** | ✅ Fixed live + migration 014 | `"Public read players basic" USING (true)` exposed every player's phone/email to anyone with the anon key — same class of bug as the 2026-07-23 registrations incident, pre-existing, found during identity work. Fixed via a `players_public` view (id/team_id/is_captain/full_name only); admin and self-scoped reads unaffected. |
+| **Identity — Phase 1 (self-scoped RLS + linking triggers)** | ✅ Done, migrations 012/013 applied | `players.auth_user_id`/`volunteer_applications.auth_user_id` + self-scoped RLS + phone/email linking triggers, mirroring `handle_invite_signup`. Phases 2-4 (captain phone OTP swap, volunteer magic link, trimming treasurer/volunteer_coord/referee/control_desk RLS) **not started** — deprioritized in favor of the roster work below once it became clear team/player creation was fundamentally broken. |
+| **Team roster registration + per-player approval** | ✅ Done, live-verified | Full rebuild of team registration: spreadsheet upload (primary, `.csv`/`.xlsx` via SheetJS) or manual entry (secondary, collapsible cards), post-upload captain/coach role assignment, per-player approval on the Registrations page foldout, `teams.status` derived via DB trigger from player statuses. See below for what this replaced and the bugs found. |
 | 5: Serverless functions (OTP + Stripe) | Not started | Player Portal OTP shows graceful error; no backend exists |
 | 6: Artifact generation engine | Not started | Publish tab has hardcoded placeholder data |
 | 7: Deployment / hosting | ✅ Done, live-verified | Netlify, Git-linked CI/CD → https://cocomo-events.netlify.app. See "Deployment — Live" below. |
@@ -127,6 +131,53 @@ This needs real design discussion (what exactly each Game Day role can see and d
 ### Process note — "documented as done" must mean "verified," not "code written"
 
 This session (and the three before it) repeatedly found things `PROJECT_STATUS.md` documented as done that weren't actually in the codebase or weren't live: route protection, the `?redirect=` param, the Team tab, the Super Admin view, and the registrations public-read policy drop. **Every one of these was caught through direct live testing, not code review.** Going forward, "done" in this doc should mean *manually verified against the running app / live DB*, not *code written and compiling*. This instruction has been added to recent CC handoffs and should keep being followed.
+
+---
+
+## Session Update — 2026-07-25
+
+### 🔴 Found: `teams.createFromRegistration()` existed but was never called
+
+Discovered while trying to generate real test data for the identity work: approving a registration in the Registrations panel only ever updated `registrations.status` — nothing converted an approved registration into a `teams` row or created any `players` rows. The conversion function existed in `api.js`, scaffolded but never wired into the approval flow. This meant no tournament run through this app could ever have progressed past registration, regardless of anything else built. Root-caused this session, not fixed by a patch — see the roster rebuild below, which fixes it properly rather than just wiring the old function in.
+
+### 🔴 Found and fixed live: `players` table public PII exposure
+
+Same class of bug as the 2026-07-23 `registrations` incident. `schema.sql`'s `"Public read players basic" ON players FOR SELECT USING (true)` had never been narrowed — anyone with the anon key could read every player's phone/email/dietary needs/shirt size, for every event. Pre-existing, not introduced this session. Fixed via migration 014: dropped the public policy entirely, added a `players_public` view exposing only `id, team_id, is_captain, full_name`, with public/`LivePage` reads redirected through the view while admin reads keep full column access. Live-verified against real roster data by session's end — both the security fix and the public roster display (`LivePage`) confirmed working correctly.
+
+### ✅ Publish-event flow — built and live-verified
+
+Every event was stuck `status = 'draft'` in prod with no UI to change it, and a draft event's public page threw a raw Postgrest error instead of a friendly message. Fixed: `events.get()` swapped `.single()` → `.maybeSingle()`, `EventStatusCard` added to the Publish tab (org_admin/admin/super_admin only, matching existing RLS scope — confirmed via code that `is_event_admin_for()` is role-blind within scope, a known pre-existing gap tracked separately, not fixed here).
+
+**A real bug found during verification:** the admin route for a draft event showed the public "not published" message instead of prompting login, when accessed while logged out — a hard lock, since the only way to publish a draft event is via its own admin panel. Root cause: the event-config fetch fired in a `useEffect` on mount, before auth session restoration necessarily finished — a race, not a JSX-ordering issue (an initial theory about component nesting order was wrong; timing was the actual cause). Fixed by merging auth-gating and config-gating into one `AdminGate` component that waits for both to resolve before deciding what to render, with a guarded single retry. Live-verified across logged-out, correct-scope, wrong-scope, and nonexistent-event cases.
+
+### ✅ Team roster registration + per-player approval — built and live-verified
+
+Full rebuild, not a patch. Replaces the never-wired `teams.createFromRegistration()` gap above with a real submission flow:
+
+- **Entry method:** spreadsheet upload (primary/default) or manual entry (secondary, via a toggle), not combined — switching methods after entering data prompts a confirm dialog (data loss both directions).
+- **Spreadsheet path:** drop box (`.csv`/`.xlsx` via the new `xlsx`/SheetJS dependency) with a downloadable template (`name`, `email`, `phone`, plus optional `shirt_size`/`dietary_needs`), client-side parsing with clear per-column failure messaging (not just a wall of ambiguous warnings), remove/replace control on the loaded file.
+- **Role assignment, post-upload:** "Choose Captain" → "Choose Coach" (if the event's existing `events.require_coach` flag is set) checkbox flow, replacing everyone else's label with "Player." Manual path: captain is the fixed first collapsible card, coach is a simple per-card toggle.
+- **Submission:** `registrations` (captain fields sourced from whichever entry is flagged captain) → `teams.create()` → `players.createBatch()`, sequential calls (no transaction wrapper exists anywhere in this codebase — an accepted, documented risk, not a new gap; see `FEATURE_SPEC_team_roster_registration.md`).
+- **Registrations page:** the foldout mechanism was found to be **completely non-functional** — expand state toggled, chevron rotated, but no expanded content was ever rendered in the JSX at all. Rebuilt for real: captain (informational, from `registrations`) plus every player (from `players`, fully actionable — independent approve/reject per row, same pattern as the existing registration-level payment/approval checkboxes).
+- **`teams.status`** is derived via a new DB trigger (migration 016), not frontend logic — recomputes to `approved` once the captain and at least `events.players_min` total players are individually approved; never auto-writes `rejected`/`withdrawn`, so one rejected player can't cascade to reject the whole team.
+
+**Two real bugs found and fixed during live verification, both confirmed via direct SQL against live data before any fix was attempted:**
+1. **Captain identified by array position (`confirmedRoster[0]`) instead of by role.** Since captain/coach are chosen *after* upload (not assumed to be whichever row happened to load first), code that assumed position-0 was the captain could validate or submit the wrong person's data. Fixed by using an explicit role field instead of array position throughout.
+2. **Realtime merge couldn't display nested rosters.** `useRealtimeTable`'s realtime handler hand-merged flat `postgres_changes` payloads (which never include embedded relations) into local state — for any query embedding a relation (like `teams` with nested `players`), an inserted/updated row's embedded data was structurally absent after a realtime event, not stale. This is a general bug, not specific to this one screen — anywhere `useRealtimeTable` is used with an embedded relation was affected. Fixed: the hook now detects an embedded `select` and does a full refetch on any change instead of hand-merging.
+
+Live-verified end-to-end: multi-player roster submission (both entry methods), per-player approval, team status derivation, and `LivePage`'s public roster display — all confirmed working against real test data ("blahs" / Clark Kent + Lois Lane) by session's end.
+
+**Migrations from this session, all manually applied and confirmed live:** 012 (player self-identity), 013 (volunteer self-identity), 014 (players_public view / PII fix), 015 (team/player roster status columns), 016 (team status derivation trigger).
+
+### Still open, going into next session
+
+- **Identity work Phases 2-4** — captain phone OTP swap (replacing the still-dead `otp.request`/`otp.verify`/`otp_sessions` path), volunteer magic link, and trimming treasurer/volunteer_coord/referee/control_desk RLS to the matrix in `FEATURE_SPEC_entitlements_and_identity.md`. Phase 1 only.
+- **Registration pause feature** (`FEATURE_SPEC_registration_pause.md`) — spec'd, not built.
+- **Marketing page / `/your_events`** (`FEATURE_SPEC_routing_and_landing.md` Parts 1-3) — only Part 0 (publish-fix) is done; the rest is unbuilt.
+- **Self-registration** (Path B in the roster spec) — deferred, confirmed additive/cheap to add later, not a foundation that needed building now.
+- **`players` not in the realtime publication list** — the Registrations panel works around this with an explicit `refetchTeams()` call; any future view wanting live player-status updates will need the same workaround or a proper fix (adding `players` to the realtime publication).
+- **Sequential-write risk on roster submission** (no transaction wrapper) — accepted for v1, noted as debt in `FEATURE_SPEC_team_roster_registration.md`, not verified against an actual mid-submit failure.
+- **`is_event_admin_for()` is role-blind within scope** — a referee/control_desk admin could technically call `events.update()` directly despite the Publish tab being hidden from them via `ROLE_TABS`. Pre-existing, tracked, feeds into the still-pending identity Phase 4 RLS trim.
 
 ---
 

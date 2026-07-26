@@ -2,15 +2,14 @@ import { useState, useRef, useMemo } from "react";
 import {
   Trophy, Users, MapPin, Heart, DollarSign, Calendar, Clock,
   Shield, AlertTriangle, Phone, Mail, Check, ArrowRight, Star,
-  Shirt, UtensilsCrossed, CreditCard, Banknote, Send, Award,
+  CreditCard, Banknote, Send, Award,
   Target, Lock, Globe, Gift, Camera, MessageSquare, ChevronDown,
   Thermometer, Image, HandHelping, Flag, X, AlertCircle
 } from "lucide-react";
 import { useEvent } from "../context/EventContext";
-import { registrations, volunteers } from "../services/api";
-import RosterDropBox from "../components/RosterDropBox";
+import { registrations, teams, players, volunteers } from "../services/api";
+import TeamRosterSection from "../components/TeamRosterSection";
 
-const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const formatDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
 const fs = (s) => ({ fontSize: s });
@@ -251,11 +250,7 @@ function Sponsors() {
    REGISTRATION FORM — STYLES & HELPERS (hoisted for perf)
    ═══════════════════════════════════════════════════════════ */
 const INP = { width: "100%", padding: "12px 14px", background: "#ffffff08", border: "1px solid #ffffff15", borderRadius: 10, color: "#fff", fontSize: 14, fontFamily: "'Inter',sans-serif" };
-const INP_SM = { ...INP, padding: "10px 12px", fontSize: 13 };
-const SEL = { ...INP, appearance: "none", backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff50' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" };
-const SEL_SM = { ...SEL, padding: "10px 12px", fontSize: 13 };
 const LBL = { display: "block", fontSize: 11, fontWeight: 700, color: "#ffffff60", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 };
-const LBL_SM = { ...LBL, fontSize: 10 };
 
 function FormCard({ icon: Icon, title, sub, children }) {
   const { config: C } = useEvent();
@@ -279,24 +274,15 @@ function RegistrationForm({ formRef }) {
 
   const [t, setT] = useState({
     teamName: "", slogan: "", story: "",
-    captainName: "", captainEmail: "", captainPhone: "", captainShirt: "",
-    p1Name: "", p1Shirt: "", p1Diet: "",
-    p2Name: "", p2Shirt: "", p2Diet: "",
     paymentMethod: "e_transfer", donation: 0,
     imageConsent: false, waiverAccepted: false,
   });
 
-  // Team roster upload — parsing only for now. Phase 3
-  // (FEATURE_SPEC_team_roster_registration.md) replaces this read-only
-  // preview with the editable add/edit/remove table and wires `roster`
-  // into actual team/player creation on submit; nothing here is
-  // currently included in handleSubmit.
-  const [roster, setRoster] = useState([]);
-  const [rosterFileWarning, setRosterFileWarning] = useState(null);
-  const handleRosterParsed = (rows, fileWarning) => {
-    setRoster(rows);
-    setRosterFileWarning(fileWarning);
-  };
+  // Locked-in roster from TeamRosterSection — null until its "OK — confirm
+  // roster" action fires. Index 0 is always the captain (see
+  // TeamRosterSection.jsx). This is the only source of captain contact
+  // info now; team/player rows are created from it at submit time.
+  const [confirmedRoster, setConfirmedRoster] = useState(null);
 
   const u = (k, v) => setT(p => ({ ...p, [k]: v }));
   const total = C.registration.fee + (t.donation || 0);
@@ -305,7 +291,7 @@ function RegistrationForm({ formRef }) {
   const storyOver = storyWords > C.registration.storyMaxWords;
   const sloganOver = sloganWords > C.registration.sloganMaxWords;
 
-  const valid = t.teamName && t.captainName && t.captainEmail && t.captainPhone && t.p1Name
+  const valid = t.teamName && confirmedRoster
     && (!C.registration.imageConsent || t.imageConsent) && (!C.registration.waiverRequired || t.waiverAccepted)
     && !storyOver && !sloganOver;
 
@@ -314,20 +300,26 @@ function RegistrationForm({ formRef }) {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const captain = confirmedRoster[0];
       const result = await registrations.create(eventId, {
         teamName: t.teamName,
         slogan: t.slogan,
         story: t.story,
-        captainName: t.captainName,
-        captainEmail: t.captainEmail,
-        captainPhone: t.captainPhone,
-        captainShirt: t.captainShirt,
-        captainDiet: t.captainDiet || "",
+        captainName: captain.name,
+        captainEmail: captain.email,
+        captainPhone: captain.phone,
+        captainShirt: captain.shirt_size,
+        captainDiet: captain.dietary_needs || "",
         paymentMethod: t.paymentMethod,
         donation: t.donation || 0,
         imageConsent: t.imageConsent,
         waiverAccepted: t.waiverAccepted,
       });
+      const team = await teams.create(eventId, result.id, {
+        name: t.teamName,
+        slogan: t.slogan,
+      });
+      await players.createBatch(team.id, eventId, result.id, confirmedRoster);
       setReconCode(result.reconciliation_code);
       setState("success");
     } catch (err) {
@@ -350,7 +342,7 @@ function RegistrationForm({ formRef }) {
             {isPending ? "Registration Submitted!" : "You're In!"}
           </h2>
           <p className="fb" style={{ fontSize: 15, color: "#ffffffaa", marginBottom: 12, lineHeight: 1.6 }}>
-            <strong style={{ color: "#fff" }}>{t.teamName}</strong> — details received. A summary has been sent to <strong style={{ color: C.brand.accent }}>{t.captainEmail}</strong>.
+            <strong style={{ color: "#fff" }}>{t.teamName}</strong> — details received. A summary has been sent to <strong style={{ color: C.brand.accent }}>{confirmedRoster?.[0]?.email}</strong>.
           </p>
           {isPending && (
             <div style={{ background: `${C.brand.accent}10`, border: `1px solid ${C.brand.accent}25`, borderRadius: 12, padding: "12px 16px", marginBottom: 28, display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -436,74 +428,13 @@ function RegistrationForm({ formRef }) {
           </FormCard>
         )}
 
-        {/* Captain (= Player 1) */}
-        <FormCard icon={Shield} title="Team Captain (Player 1)" sub="The captain enters scores on game day via mobile login. Captain counts as Player 1.">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div style={{ gridColumn: "1/-1" }}><label style={LBL}>Full Name *</label><input style={INP} value={t.captainName} onChange={e => u("captainName", e.target.value)} placeholder="Jane Smith" /></div>
-            <div><label style={LBL}>Email *</label><input style={INP} type="email" value={t.captainEmail} onChange={e => u("captainEmail", e.target.value)} placeholder="jane@email.com" /></div>
-            <div><label style={LBL}>Phone *</label><input style={INP} type="tel" value={t.captainPhone} onChange={e => u("captainPhone", e.target.value)} placeholder="+1 250-555-0100" /></div>
-          </div>
-          {C.registration.collectShirts && (
-            <div style={{ marginTop: 12 }}><label style={LBL}><Shirt size={10} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Shirt Size</label>
-              <select style={SEL} value={t.captainShirt} onChange={e => u("captainShirt", e.target.value)}><option value="">Select</option>{SHIRT_SIZES.map(s => <option key={s}>{s}</option>)}</select></div>
-          )}
-          {C.registration.collectDietary && (
-            <div style={{ marginTop: 12 }}><label style={LBL}><UtensilsCrossed size={10} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Dietary Needs</label>
-              <input style={INP} value={t.captainDiet || ""} onChange={e => u("captainDiet", e.target.value)} placeholder="Allergies, vegetarian, etc." /></div>
-          )}
-        </FormCard>
-
-        {/* Additional Players (captain is player 1, so we need playersPerTeam - 1 more) */}
-        {C.tournament.playersPerTeam > 1 && (
-          <FormCard icon={Users} title={`Player 2${C.tournament.playersPerTeam > 2 ? ` – ${C.tournament.playersPerTeam}` : ""}`} sub={`${C.tournament.playersPerTeam - 1} additional player${C.tournament.playersPerTeam > 2 ? "s" : ""} needed (captain is Player 1)`}>
-            {Array.from({ length: C.tournament.playersPerTeam - 1 }, (_, i) => i + 1).map(n => (
-              <div key={n} style={{ padding: 16, background: "#ffffff04", borderRadius: 12, border: "1px solid #ffffff08", marginBottom: n < C.tournament.playersPerTeam - 1 ? 12 : 0 }}>
-                <p className="fb" style={{ fontSize: 12, fontWeight: 700, color: "#ffffff50", marginBottom: 10 }}>Player {n + 1}</p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div style={{ gridColumn: "1/-1" }}><label style={LBL_SM}>Name *</label><input style={INP_SM} value={t[`p${n}Name`]} onChange={e => u(`p${n}Name`, e.target.value)} placeholder={`Player ${n + 1} name`} /></div>
-                  <div><label style={LBL_SM}>Email *</label><input style={INP_SM} type="email" value={t[`p${n}Email`] || ""} onChange={e => u(`p${n}Email`, e.target.value)} placeholder="player@email.com" /></div>
-                  <div><label style={LBL_SM}>Phone</label><input style={INP_SM} type="tel" value={t[`p${n}Phone`] || ""} onChange={e => u(`p${n}Phone`, e.target.value)} placeholder="+1 250-555-0100" /></div>
-                </div>
-                {C.registration.collectShirts && (
-                  <div style={{ marginTop: 8 }}><label style={LBL_SM}><Shirt size={9} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Shirt Size</label>
-                    <select style={SEL_SM} value={t[`p${n}Shirt`] || ""} onChange={e => u(`p${n}Shirt`, e.target.value)}><option value="">Size</option>{SHIRT_SIZES.map(s => <option key={s}>{s}</option>)}</select></div>
-                )}
-                {C.registration.collectDietary && (
-                  <div style={{ marginTop: 8 }}><label style={LBL_SM}><UtensilsCrossed size={9} style={{ display: "inline", verticalAlign: -1, marginRight: 4 }} /> Dietary Needs</label>
-                    <input style={INP_SM} value={t[`p${n}Diet`] || ""} onChange={e => u(`p${n}Diet`, e.target.value)} placeholder="Allergies, vegetarian..." /></div>
-                )}
-              </div>
-            ))}
-          </FormCard>
-        )}
-
-        {/* Team Roster upload — Phase 2: drop box + parsing only.
-            Phase 3 turns `roster` below into the real editable review
-            table (add/edit/remove row, inline warnings, manual-entry
-            path) and wires it into submission. This preview list is
-            temporary, just enough to see parsing actually worked. */}
-        <FormCard icon={Users} title="Team Roster" sub={`Upload your roster (${C.tournament.playersMin}-${C.tournament.playersMax} players) as a spreadsheet — or use the fields below.`}>
-          <RosterDropBox maxPlayers={C.tournament.playersMax} onParsed={handleRosterParsed} />
-          {rosterFileWarning && (
-            <p className="fb" style={{ fontSize: 12, color: C.brand.accent, marginTop: 12 }}>{rosterFileWarning}</p>
-          )}
-          {roster.length > 0 && (
-            <div style={{ marginTop: 16, display: "grid", gap: 6 }}>
-              {roster.map((r, i) => (
-                <div key={i} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-                  padding: "8px 12px", borderRadius: 8, fontSize: 12,
-                  background: r.warnings.length ? `${C.brand.primary}10` : "#ffffff04",
-                  border: `1px solid ${r.warnings.length ? C.brand.primary + "30" : "#ffffff08"}`,
-                }}>
-                  <span style={{ color: "#fff", fontWeight: 600 }}>{r.name || <em style={{ color: "#ffffff40" }}>no name</em>}</span>
-                  <span style={{ color: "#ffffff60" }}>{r.email || <em style={{ color: "#ffffff40" }}>no email</em>}</span>
-                  <span style={{ color: "#ffffff60" }}>{r.phone}</span>
-                  {r.warnings.length > 0 && <span style={{ color: C.brand.primary, fontWeight: 700 }}>⚠</span>}
-                </div>
-              ))}
-            </div>
-          )}
+        {/* Team Roster — captain + players, either a spreadsheet upload
+            (default) or manual entry (toggle below it). Captain contact
+            info lives here now (index 0 of the confirmed roster), not in
+            a separate top-level field set — see
+            FEATURE_SPEC_team_roster_registration.md's revised v1 section. */}
+        <FormCard icon={Shield} title="Team Roster" sub={`${C.tournament.playersMin}–${C.tournament.playersMax} players, captain first. The captain enters scores on game day via mobile login.`}>
+          <TeamRosterSection onConfirmed={setConfirmedRoster} />
         </FormCard>
 
         {/* Payment */}

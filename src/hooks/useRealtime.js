@@ -53,6 +53,21 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
         (payload) => {
           const { eventType, new: newRow, old: oldRow } = payload;
 
+          // postgres_changes payloads are always the flat row from `table`
+          // itself — they never include embedded/joined relations. For a
+          // plain select ("*") that's harmless to hand-merge. But when
+          // options.select embeds a nested relation (e.g. "*, players(*)"),
+          // hand-merging is actively wrong: an INSERT would append a team
+          // object with no `players` key at all (a silently empty roster,
+          // not just a stale one), and even the UPDATE merge below only
+          // gets away with it by accident (spreading a keyless `players`
+          // field is a no-op, not a correct refresh). Refetch instead so
+          // embedded data is always the real, complete query result.
+          if (options.select && options.select.includes("(")) {
+            fetchData();
+            return;
+          }
+
           setData((prev) => {
             if (eventType === "INSERT") {
               return [...prev, newRow];
@@ -76,7 +91,7 @@ function useRealtimeTable(table, eventId, initialFetch, options = {}) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [eventId, table]);
+  }, [eventId, table, fetchData]);
 
   return { data, loading, setData, refetch: fetchData };
 }
@@ -191,7 +206,7 @@ export function useRealtimeAreas(eventId) {
  * string so callers don't need to know which source it came from.
  */
 export function useRealtimeTeams(eventId, { publicSafe = false } = {}) {
-  const { data, loading } = useRealtimeTable("teams", eventId, true, {
+  const { data, loading, refetch } = useRealtimeTable("teams", eventId, true, {
     select: publicSafe
       ? "*, players:players_public(*), pool:pools(name)"
       : "*, players(*), pool:pools(name)",
@@ -201,7 +216,13 @@ export function useRealtimeTeams(eventId, { publicSafe = false } = {}) {
   const checkedIn = data.filter((t) => t.checked_in);
   const eliminated = data.filter((t) => t.eliminated);
 
-  return { teams: data, checkedIn, eliminated, loading };
+  // Note: the "teams" realtime subscription only reflects changes to the
+  // teams row itself (including teams.status, kept correct by a DB
+  // trigger on player status changes). It does NOT propagate nested
+  // players[] row updates — callers that mutate player rows and need the
+  // embedded roster to reflect it (e.g. per-player approval) should call
+  // refetch() themselves afterward.
+  return { teams: data, checkedIn, eliminated, loading, refetch };
 }
 
 /**

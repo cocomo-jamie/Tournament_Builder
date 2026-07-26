@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import {
   Trophy, Users, DollarSign, Check, X, Search,
   ChevronRight, Eye, Shield, Calendar, Clock,
@@ -16,7 +16,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useEvent } from "../context/EventContext";
 import { useAuth } from "../context/AuthContext";
-import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi } from "../services/api";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi } from "../services/api";
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 import { useScreenLock } from "../hooks/useScreenLock";
 
@@ -105,10 +105,21 @@ function RegistrationsPanel() {
   const B = config.brand;
 
   const { data: rawRegs, loading: regsLoading, refetch: refetchRegs } = useRealtimeRegistrations(eventId);
+  const { teams: allTeams, refetch: refetchTeams } = useRealtimeTeams(eventId);
 
   const { isActive, queuePosition, queueLength, activeAdminName, recordActivity } =
     useScreenLock(eventId, "registrations", adminUser?.id, adminUser?.display_name);
   const canEdit = isActive;
+
+  // registration_id → team (with its joined players[]), for the foldout.
+  // Keyed by String() since registrations.id is bigint and realtime
+  // payloads aren't guaranteed to arrive as the same JS type as the
+  // initial REST fetch (see useRealtime.js's UPDATE-merge comment).
+  const teamByRegId = useMemo(() => {
+    const m = new Map();
+    (allTeams || []).forEach((t) => { if (t.registration_id != null) m.set(String(t.registration_id), t); });
+    return m;
+  }, [allTeams]);
 
   const data = useMemo(() => {
     return (rawRegs || []).map(r => ({
@@ -135,6 +146,7 @@ function RegistrationsPanel() {
   }, [rawRegs]);
 
   const [changes, setChanges] = useState({});
+  const [playerChanges, setPlayerChanges] = useState({});
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
@@ -154,10 +166,33 @@ function RegistrationsPanel() {
     }
   }, [rawRegs]);
 
+  // Kept as its own state (not merged into `changes`) since the cleanup
+  // effect above validates keys against registration ids — mixing
+  // player ids into that same object would get them silently stripped
+  // the moment rawRegs refreshes.
+  useEffect(() => {
+    if (allTeams) {
+      const validIds = new Set((allTeams || []).flatMap(t => (t.players || []).map(p => p.id)));
+      setPlayerChanges(prev => {
+        const cleaned = {};
+        for (const [id, val] of Object.entries(prev)) {
+          if (validIds.has(id)) cleaned[id] = val;
+        }
+        return cleaned;
+      });
+    }
+  }, [allTeams]);
+
   // Queues a partial-field change for a registration, e.g. { payment: "paid" } or { status: "approved" }
   const queueChange = (id, fields) => {
     setChanges(prev => ({ ...prev, [id]: { ...prev[id], ...fields } }));
   };
+  const queuePlayerChangeWithActivity = (id, fields) => {
+    recordActivity();
+    setPlayerChanges(prev => ({ ...prev, [id]: { ...prev[id], ...fields } }));
+  };
+  const getEffectivePlayer = (p) => ({ ...p, ...(playerChanges[p.id] || {}) });
+  const hasPlayerChange = (id) => !!playerChanges[id];
   const queueChangeWithActivity = (id, fields) => {
     recordActivity();
     queueChange(id, fields);
@@ -183,23 +218,43 @@ function RegistrationsPanel() {
         return update;
       });
 
-      await registrationsApi.batchUpdate(updates);
-      await refetchRegs(); // guarantees fresh data regardless of realtime merge timing
+      if (updates.length) {
+        await registrationsApi.batchUpdate(updates);
+        await refetchRegs(); // guarantees fresh data regardless of realtime merge timing
 
-      // Audit log each change
-      for (const u of updates) {
-        if (u.payment_status !== undefined) {
-          await activityLog.log(eventId, u.payment_status === "paid" ? "payment_confirmed" : "payment_reverted", "registration", u.id, u, adminUser?.id);
+        // Audit log each change
+        for (const u of updates) {
+          if (u.payment_status !== undefined) {
+            await activityLog.log(eventId, u.payment_status === "paid" ? "payment_confirmed" : "payment_reverted", "registration", u.id, u, adminUser?.id);
+          }
+          if (u.status !== undefined) {
+            const action = u.status === "approved" ? "registration_approved"
+              : u.status === "rejected" ? "registration_rejected"
+              : "registration_reverted"; // e.g. un-checking approval back to "submitted"
+            await activityLog.log(eventId, action, "registration", u.id, u, adminUser?.id);
+          }
         }
-        if (u.status !== undefined) {
-          const action = u.status === "approved" ? "registration_approved"
-            : u.status === "rejected" ? "registration_rejected"
-            : "registration_reverted"; // e.g. un-checking approval back to "submitted"
-          await activityLog.log(eventId, action, "registration", u.id, u, adminUser?.id);
+      }
+
+      // Per-player approve/reject — same interaction model, one level
+      // deeper. Each write here also fires the DB trigger that
+      // recomputes the owning team's status (migration 016), so there's
+      // nothing to compute here beyond the write + refetch.
+      const playerUpdates = Object.entries(playerChanges).map(([id, fields]) => ({ id, status: fields.status }));
+      if (playerUpdates.length) {
+        await playersApi.batchUpdate(playerUpdates);
+        await refetchTeams(); // teams' nested players[] doesn't self-update via realtime — see useRealtime.js
+
+        for (const u of playerUpdates) {
+          const action = u.status === "approved" ? "player_approved"
+            : u.status === "rejected" ? "player_rejected"
+            : "player_reverted";
+          await activityLog.log(eventId, action, "player", u.id, u, adminUser?.id);
         }
       }
 
       setChanges({});
+      setPlayerChanges({});
     } catch (err) {
       console.error("Batch update failed:", err);
       setSubmitError("Failed to save changes. Please try again.");
@@ -207,7 +262,7 @@ function RegistrationsPanel() {
       setSubmitting(false);
     }
   };
-  const discardAll = () => setChanges({});
+  const discardAll = () => { setChanges({}); setPlayerChanges({}); };
 
   const filtered = useMemo(() => {
     let list = data.map(getEffective);
@@ -218,7 +273,7 @@ function RegistrationsPanel() {
     return list;
   }, [data, changes, filter, search]);
 
-  const changeCount = Object.keys(changes).length;
+  const changeCount = Object.keys(changes).length + Object.keys(playerChanges).length;
 
   return (
     <div>
@@ -265,8 +320,11 @@ function RegistrationsPanel() {
           <tbody>
             {filtered.map(r => {
               const changed = hasChange(r.id);
+              const team = teamByRegId.get(String(r.id));
+              const roster = [...(team?.players || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
               return (
-                <tr key={r.id} onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+              <Fragment key={r.id}>
+                <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)}
                   style={{ cursor: "pointer", background: changed ? B.accent + "08" : "transparent", borderLeft: changed ? `3px solid ${B.accent}` : "3px solid transparent" }}
                   onMouseEnter={e => { if (!changed) e.currentTarget.style.background = "#ffffff06"; }}
                   onMouseLeave={e => { if (!changed) e.currentTarget.style.background = "transparent"; }}>
@@ -309,6 +367,65 @@ function RegistrationsPanel() {
                     )}
                   </td>
                 </tr>
+
+                {expanded === r.id && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: 0, background: "#00000030" }}>
+                      <div style={{ padding: "16px 20px 20px 42px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 1 }}>From Registration</p>
+                          <Badge status={r.status} />
+                        </div>
+                        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20, fontSize: 13, color: "#ffffffcc" }}>
+                          <span><strong style={{ color: "#fff" }}>{r.captain}</strong></span>
+                          <span style={{ color: "#ffffff60" }}>{r.email}</span>
+                          <span style={{ color: "#ffffff60" }}>{r.phone}</span>
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 1 }}>Roster</p>
+                          {team ? <Badge status={team.status || "pending"} /> : <span style={{ fontSize: 11, color: "#ffffff40" }}>No team/roster on file</span>}
+                        </div>
+
+                        {roster.length === 0 ? (
+                          <p style={{ fontSize: 12, color: "#ffffff40" }}>No players recorded for this team.</p>
+                        ) : (
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {roster.map(p => {
+                              const ep = getEffectivePlayer(p);
+                              const pChanged = hasPlayerChange(p.id);
+                              const role = p.is_captain ? "Captain" : p.is_coach ? "Coach" : "Player";
+                              return (
+                                <div key={p.id} style={{
+                                  display: "flex", alignItems: "center", gap: 14, padding: "8px 12px", borderRadius: 8,
+                                  background: pChanged ? B.accent + "10" : "#ffffff05",
+                                  border: `1px solid ${pChanged ? B.accent + "30" : "#ffffff08"}`,
+                                }}>
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: role === "Player" ? "#ffffff40" : B.accent, minWidth: 55 }}>{role.toUpperCase()}</span>
+                                  <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{p.full_name}</span>
+                                  <span style={{ fontSize: 12, color: "#ffffff60" }}>{p.email}</span>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: canEdit ? "pointer" : "not-allowed" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={ep.status === "approved"}
+                                      disabled={!canEdit}
+                                      onChange={(e) => queuePlayerChangeWithActivity(p.id, { status: e.target.checked ? "approved" : "pending" })}
+                                    />
+                                    <Badge status={ep.status || "pending"} />
+                                  </label>
+                                  {ep.status !== "rejected" && (
+                                    <button onClick={() => queuePlayerChangeWithActivity(p.id, { status: "rejected" })} disabled={!canEdit} style={S.btnSm("#ef444420", "#ef4444")} title="Reject player"><X size={13} /></button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
               );
             })}
           </tbody>

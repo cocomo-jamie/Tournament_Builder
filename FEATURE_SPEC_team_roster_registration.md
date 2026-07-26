@@ -68,7 +68,9 @@ Per your instruction: captain listed first, then teammates, each individually ac
 
 ## What happens to `teams.createFromRegistration()`
 
-Becomes dead code under this design — team creation moves to registration-submission time. Remove it rather than leave an unused function sitting in `api.js`.
+Removed (confirmed, Phase 3) — team creation now happens at registration-submission time via `teams.create()`, called sequentially after `registrations.create()` and before `players.createBatch()`.
+
+**Accepted risk, recorded 2026-07-25:** submission is three sequential Supabase calls (`registrations.create()` → `teams.create()` → `players.createBatch()`) with no transaction wrapper — matches the app's existing pattern elsewhere (no RPC/transaction wrapper exists anywhere in this codebase), not a regression introduced here. If `players.createBatch()` fails partway through a roster, the result is an orphaned `teams` row and a partial roster with no automatic cleanup. Manually verified end-to-end on the happy path (2026-07-25); a genuine mid-submit failure could not be forced during testing, so this specific failure mode remains unverified in practice. Accepted as known debt for v1 rather than building rollback/cleanup logic now — revisit if it actually manifests, or before this is trusted with real, non-test registrations at scale.
 
 ## Deferred — Path B, self-registration (additive, build later, no rework needed)
 
