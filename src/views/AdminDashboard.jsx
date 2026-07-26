@@ -11,7 +11,7 @@ import {
   CircleDot, ArrowUpDown, ExternalLink, Download,
   Undo2, Save, CreditCard as Card, BookOpen, Printer,
   Timer, Ban, SkipForward, Shuffle, LayoutGrid, Sliders,
-  BadgeCheck, QrCode, Scissors, UserPlus, Copy
+  BadgeCheck, QrCode, Scissors, UserPlus, Copy, Globe
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useEvent } from "../context/EventContext";
@@ -608,6 +608,54 @@ function BuildContext() {
 /* ═══════════════════════════════════════════════════════════
    PUBLISH — with ID Badge Preview
    ═══════════════════════════════════════════════════════════ */
+function EventStatusCard() {
+  const { config, eventId, refetch } = useEvent();
+  const B = config.brand;
+  const status = config.event.status || "draft";
+  const isPublished = status !== "draft";
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState(null);
+
+  const handlePublish = async () => {
+    if (publishing) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      await eventsApi.updateStatus(eventId, "registration_open");
+      await refetch();
+    } catch (err) {
+      console.error("Failed to publish event:", err);
+      setPublishError("Failed to publish. Please try again.");
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+      <div>
+        <p style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Event Status</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Badge status={isPublished ? "published" : "draft"} />
+          <span style={{ fontSize: 12, color: "#ffffff50" }}>
+            {isPublished ? "Public page is live at /e/" + eventId : "Public page returns \"not public yet\" until published"}
+          </span>
+        </div>
+      </div>
+      {!isPublished ? (
+        <div style={{ textAlign: "right" }}>
+          <button onClick={handlePublish} disabled={publishing} style={{ ...S.btn("#22c55e", "#fff"), opacity: publishing ? 0.7 : 1 }}>
+            <Globe size={14} /> {publishing ? "Publishing..." : "Publish Event"}
+          </button>
+          {publishError && <p style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{publishError}</p>}
+        </div>
+      ) : (
+        <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Live</span>
+      )}
+    </div>
+  );
+}
+
 function PublishContext() {
   const { config } = useEvent();
   const B = config.brand;
@@ -622,6 +670,7 @@ function PublishContext() {
 
   return (
     <div>
+      <EventStatusCard />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <div><h2 style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>Artifact Publisher</h2>
           <p style={{ fontSize: 13, color: "#ffffff50" }}>Generate, review, approve, publish.</p></div>

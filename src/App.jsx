@@ -17,7 +17,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { EventProvider, useEvent } from "./context/EventContext";
 import { AuthProvider } from "./context/AuthContext";
-import { LoadingSpinner, ErrorDisplay, NoEventDisplay } from "./components/LoadingSpinner";
+import { LoadingSpinner, ErrorDisplay, NoEventDisplay, EventNotPublishedDisplay } from "./components/LoadingSpinner";
 import ProtectedRoute, { useResolvedAuth } from "./components/ProtectedRoute";
 
 // Views
@@ -51,10 +51,11 @@ function EventShell({ children }) {
 // ─────────────────────────────────────────────────────────
 
 function ConfigGate({ children }) {
-  const { config, loading, error, refetch } = useEvent();
+  const { config, loading, error, notFound, refetch } = useEvent();
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorDisplay error={error} onRetry={refetch} />;
+  if (notFound) return <EventNotPublishedDisplay />;
   if (!config) return <LoadingSpinner message="Preparing tournament..." />;
 
   return children;

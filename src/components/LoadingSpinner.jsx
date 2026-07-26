@@ -122,6 +122,60 @@ export function ErrorDisplay({ error, onRetry }) {
   );
 }
 
+export function EventNotPublishedDisplay() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#0a0a0a",
+        fontFamily: "'Inter', system-ui, sans-serif",
+        gap: 16,
+        padding: 20,
+      }}
+    >
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: "50%",
+          background: "#D4A84320",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Trophy size={28} color="#D4A843" />
+      </div>
+      <h2
+        style={{
+          fontSize: 20,
+          fontWeight: 800,
+          color: "#fff",
+          fontFamily: "'Playfair Display', Georgia, serif",
+        }}
+      >
+        This Tournament Isn't Public Yet
+      </h2>
+      <p
+        style={{
+          color: "#ffffff60",
+          fontSize: 14,
+          maxWidth: 400,
+          textAlign: "center",
+          lineHeight: 1.6,
+        }}
+      >
+        The organizer hasn't published this event's page yet. Check back
+        later, or contact the organizer if you believe this is a mistake.
+      </p>
+    </div>
+  );
+}
+
 export function NoEventDisplay() {
   return (
     <div

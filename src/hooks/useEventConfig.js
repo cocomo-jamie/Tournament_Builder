@@ -18,6 +18,7 @@ export function useEventConfig(eventId) {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [notFound, setNotFound] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     if (!eventId) {
@@ -29,6 +30,7 @@ export function useEventConfig(eventId) {
     try {
       setLoading(true);
       setError(null);
+      setNotFound(false);
 
       // Fetch all data in parallel
       const [eventData, tierData, volunteerRoles, giftBasketItems] =
@@ -38,6 +40,16 @@ export function useEventConfig(eventId) {
           volunteers.listRoles(eventId),
           giftBasket.list(eventId),
         ]);
+
+      // events.get() returns null when RLS filters the row out (e.g. a
+      // draft event viewed anonymously) — that's an expected "not public
+      // yet" state, not a fetch failure.
+      if (!eventData) {
+        setConfig(null);
+        setNotFound(true);
+        setLoading(false);
+        return;
+      }
 
       // Flatten sponsors from tiers if they come nested,
       // or fetch separately if listTiers doesn't include them
@@ -76,5 +88,5 @@ export function useEventConfig(eventId) {
     fetchConfig();
   }, [fetchConfig]);
 
-  return { config, loading, error, refetch: fetchConfig };
+  return { config, loading, error, notFound, refetch: fetchConfig };
 }

@@ -16,7 +16,7 @@ export const events = {
       .from("events")
       .select("*, organizations(*), event_dates(*)")
       .eq("id", eventId)
-      .single();
+      .maybeSingle();
     if (error) throw error;
     return data;
   },

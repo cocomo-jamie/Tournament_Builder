@@ -21,10 +21,10 @@ const EventContext = createContext(null);
  * @param {React.ReactNode} children
  */
 export function EventProvider({ eventId, children }) {
-  const { config, loading, error, refetch } = useEventConfig(eventId);
+  const { config, loading, error, notFound, refetch } = useEventConfig(eventId);
 
   return (
-    <EventContext.Provider value={{ config, eventId, loading, error, refetch }}>
+    <EventContext.Provider value={{ config, eventId, loading, error, notFound, refetch }}>
       {children}
     </EventContext.Provider>
   );
@@ -33,7 +33,7 @@ export function EventProvider({ eventId, children }) {
 /**
  * Access event config from any child component.
  *
- * @returns {{ config: Object|null, eventId: string, loading: boolean, error: Error|null, refetch: Function }}
+ * @returns {{ config: Object|null, eventId: string, loading: boolean, error: Error|null, notFound: boolean, refetch: Function }}
  */
 export function useEvent() {
   const ctx = useContext(EventContext);
