@@ -32,16 +32,29 @@ ALTER TABLE players ADD COLUMN self_registered BOOLEAN DEFAULT false NOT NULL;
   -- of existing rows, just starts setting it true for its own inserts
 ```
 
-## v1 — captain enters full roster
+## v1 — roster entry (revised 2026-07-25, after Phase 2 testing)
 
-1. Registration form (currently captain-only fields) extends to a roster section, bounded by the event's `playersMin`/`playersMax`, built around a **file drop box** rather than manual paste:
-   - Captain drops a spreadsheet (`.csv` or `.xlsx`) with **`name`, `email`, `phone` columns** (header names matched case-insensitively, order-independent).
-   - Provide a **downloadable template** (a blank `.csv` with the exact headers) right next to the drop box — removes most formatting guesswork before it happens.
-   - Parse client-side on drop (no server round-trip needed just to read the file) using a spreadsheet-parsing library that handles both CSV and XLSX — **SheetJS (`xlsx` npm package)** is the standard choice here and handles both formats with one library; add it as a new dependency.
-   - **Parsed rows populate an editable table**, not a silent auto-submit — captain reviews/edits/removes rows before the actual form submit. This matters because spreadsheet input is exactly the kind of thing that goes subtly wrong (extra blank rows, a phone number Excel reformatted, a header typo) and a review step catches it before it becomes bad data in `players`. This same editable table can also take a manually-added row directly (for a captain who'd rather not build a spreadsheet for 2-3 teammates) — one UI serves both the "reviewed file import" and "manual entry" cases rather than building them separately.
-   - Validate on parse: flag rows missing `name` or `email`, flag if row count exceeds `playersMax`, but don't hard-block submission on warnings — let the captain see and decide (admin approval is still the real gate downstream).
-2. On submit: create the `registrations` row (as today, captain-only fields, unchanged), **plus** immediately create the `teams` row (`status: 'pending'`) and a `players` row per roster entry (captain first, `is_captain: true`, `status: 'pending'`, `self_registered: false`, `registration_id` set).
-3. Team/player creation now happens at **submission**, not at **approval** — a bigger change to the registration submission code path than just fixing the missing conversion call, but this is the one piece of real new work regardless of Path A/B scope.
+**Entry method: alternatives, not combined.** Spreadsheet upload is the primary/default path; "Enter manually" is a secondary option below it. A captain picks one method for the *whole* roster — not a mix of both. **Switching methods after entering data prompts a confirmation** ("Changing to [file upload / manual entry] will lose the information you've already added. Proceed?" Yes/No) — applies in both directions (manual→spreadsheet and spreadsheet→manual), since either switch discards unsaved state in the method being left.
+
+### Spreadsheet path (primary)
+1. Drop box + downloadable template, per Phase 2 (built) — template gets two more optional columns: `shirt_size`, `dietary_needs` (alongside the existing `name`, `email`, `phone`). Parser recognizes them if present, doesn't require them — same "warn, don't block" pattern as `name`/`email` today, but these two don't warn at all if absent (they're genuinely optional, not just soft-required).
+2. **Must be removable/replaceable** — a clear/remove control on the drop box once a file's loaded, so a captain isn't stuck with a bad upload. (Confirmed gap in Phase 2's build — no such control exists yet.)
+3. Parsed rows render in a review list. **Failure/warning messages must be legible guidance, not a silent wall of flags** — e.g. a file-level "We couldn't find a column matching 'email' — check your file's headers match the template" when a header doesn't match at all (confirmed gap: Phase 2 testing found a typo'd header produces per-row `missing_email` warnings with no explanation of *why*, reading as a mysterious failure rather than an actionable one).
+4. **Role assignment, after parsing:**
+   - If the event's Wizard config requests a coach: a "Choose Captain" checkbox column appears. Selecting one row triggers "Choose Coach" (checkbox column re-prompts for the remaining rows). Once both are chosen, checkboxes disappear; the two selected rows show "Captain"/"Coach" respectively, every other row shows "Player."
+   - If the event does not request a coach: only "Choose Captain" appears. Once selected, checkboxes disappear, that row shows "Captain," the rest show "Player."
+   - **Open question for CC to resolve, not guess at:** does a "coach requested" flag already exist somewhere in the Wizard's event config (grep `TournamentWizard.jsx`/`configTransformer.js`/`events` schema before assuming), or does this need a new `events` column added? `players.is_coach` already exists in the schema, but the event-level "does this tournament use coaches at all" toggle may not. Report back rather than adding a new column blind.
+5. **"OK" / confirm-roster button:** once roles are assigned and any warnings are visible/addressed, an explicit confirm action locks the roster into the registration form's local state. This does **not** write to the database — it's a step-completion action within the still-unsubmitted form, same as any other completed form section. Actual `teams`/`players` row creation still only happens when the full registration is submitted (waiver accepted, "Submit Registration" clicked) — per the existing submission-logic design below.
+
+### Manual path (secondary, via "Enter manually")
+1. **Captain and player entries are collapsible cards** — collapsed by default, showing just a header (name once entered, or "Player N" / "Captain" placeholder before that), with an arrow/chevron to expand and fill in fields. Applies to both the captain's card and every added player card — a UI change from the Phase 2 scaffolding's flat fixed-slot layout.
+2. Captain is always the fixed first card (`is_captain: true` implicit, no checkbox needed — unlike the spreadsheet path, there's no ambiguity about who's captain here).
+3. If the event requests a coach, each player card gets a simple "This person is the team coach" toggle instead of the spreadsheet path's two-step reveal — no ambiguity to resolve here either, since cards are added one at a time by a person who knows who they're adding.
+4. Same bounding by `playersMin`/`playersMax` as the spreadsheet path; same "OK"/confirm-roster action once complete.
+5. **Note on a Phase 2 testing finding:** "can't add a third player" was observed during testing — check whether this is an actual add-button bug or the test event's `playersMax` was set below 3 before assuming it's broken.
+
+### Superseded by this revision
+The Phase 2 scaffolding's fixed-slot "Additional Players" section and the temporary read-only preview list are both replaced by the design above — not extended or patched. Remove them as part of building this, don't leave both existing side by side.
 
 ## Admin UI — Registrations page, foldout per team
 
@@ -69,10 +82,10 @@ Not designed in detail here since it's out of v1 scope, but the shape for later:
 
 ## Suggested build order
 
-1. Migration: `teams.status`, `players.status`, `players.registration_id`, `players.self_registered`
-2. Add `xlsx` (SheetJS) as a dependency; build the file drop box + client-side parse + downloadable CSV template
-3. Editable roster review table (populated by parse or manual add), bounded by `playersMin`/`playersMax`, with validation warnings (missing name/email, over-count) shown but not hard-blocking
+1. Migration: `teams.status`, `players.status`, `players.registration_id`, `players.self_registered` — done
+2. File drop box + client-side parse + downloadable template (`name`/`email`/`phone`) — done, needs the additions/fixes above (remove/replace control, `shirt_size`/`dietary_needs` columns, clearer failure guidance)
+3. Entry-method toggle (spreadsheet primary / manual secondary) with switch-confirmation; collapsible captain/player cards for the manual path; role-assignment UI for the spreadsheet path (captain/coach checkboxes); "OK"/confirm-roster action; remove the superseded Phase 2 scaffolding
 4. Submission logic: create `teams` + all `players` rows at submit time (replaces/removes `teams.createFromRegistration()`)
 5. Registrations page: real foldout per team, captain first then roster, per-player approve/reject
 6. Team status derivation logic (approved once captain + minimum roster approved)
-7. Live-verify: register a test team via the file drop (try a deliberately messy spreadsheet — extra blank row, missing email on one line, a phone number Excel has reformatted — confirm the review table surfaces it sensibly rather than silently mangling it), confirm all rows appear correctly in the foldout, approve/reject individual players, confirm team status derives correctly at each stage
+7. Live-verify: both entry methods end-to-end, method-switching warning both directions, coach flow on an event configured for it and one not, a deliberately messy spreadsheet (typo'd header, blank rows, Excel-formatted phone number), confirm all rows appear correctly in the foldout, approve/reject individual players, confirm team status derives correctly at each stage

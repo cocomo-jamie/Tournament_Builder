@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useEvent } from "../context/EventContext";
 import { registrations, volunteers } from "../services/api";
+import RosterDropBox from "../components/RosterDropBox";
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const formatDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -285,6 +286,18 @@ function RegistrationForm({ formRef }) {
     imageConsent: false, waiverAccepted: false,
   });
 
+  // Team roster upload — parsing only for now. Phase 3
+  // (FEATURE_SPEC_team_roster_registration.md) replaces this read-only
+  // preview with the editable add/edit/remove table and wires `roster`
+  // into actual team/player creation on submit; nothing here is
+  // currently included in handleSubmit.
+  const [roster, setRoster] = useState([]);
+  const [rosterFileWarning, setRosterFileWarning] = useState(null);
+  const handleRosterParsed = (rows, fileWarning) => {
+    setRoster(rows);
+    setRosterFileWarning(fileWarning);
+  };
+
   const u = (k, v) => setT(p => ({ ...p, [k]: v }));
   const total = C.registration.fee + (t.donation || 0);
   const storyWords = countWords(t.story);
@@ -463,6 +476,35 @@ function RegistrationForm({ formRef }) {
             ))}
           </FormCard>
         )}
+
+        {/* Team Roster upload — Phase 2: drop box + parsing only.
+            Phase 3 turns `roster` below into the real editable review
+            table (add/edit/remove row, inline warnings, manual-entry
+            path) and wires it into submission. This preview list is
+            temporary, just enough to see parsing actually worked. */}
+        <FormCard icon={Users} title="Team Roster" sub={`Upload your roster (${C.tournament.playersMin}-${C.tournament.playersMax} players) as a spreadsheet — or use the fields below.`}>
+          <RosterDropBox maxPlayers={C.tournament.playersMax} onParsed={handleRosterParsed} />
+          {rosterFileWarning && (
+            <p className="fb" style={{ fontSize: 12, color: C.brand.accent, marginTop: 12 }}>{rosterFileWarning}</p>
+          )}
+          {roster.length > 0 && (
+            <div style={{ marginTop: 16, display: "grid", gap: 6 }}>
+              {roster.map((r, i) => (
+                <div key={i} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                  padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                  background: r.warnings.length ? `${C.brand.primary}10` : "#ffffff04",
+                  border: `1px solid ${r.warnings.length ? C.brand.primary + "30" : "#ffffff08"}`,
+                }}>
+                  <span style={{ color: "#fff", fontWeight: 600 }}>{r.name || <em style={{ color: "#ffffff40" }}>no name</em>}</span>
+                  <span style={{ color: "#ffffff60" }}>{r.email || <em style={{ color: "#ffffff40" }}>no email</em>}</span>
+                  <span style={{ color: "#ffffff60" }}>{r.phone}</span>
+                  {r.warnings.length > 0 && <span style={{ color: C.brand.primary, fontWeight: 700 }}>⚠</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </FormCard>
 
         {/* Payment */}
         <FormCard icon={DollarSign} title="Payment">
