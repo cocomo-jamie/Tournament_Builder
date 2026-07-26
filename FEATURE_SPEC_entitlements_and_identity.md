@@ -2,91 +2,83 @@
 
 **Status:** Design record, not yet built. Companion to the 2026-07-23 architecture decisions in `PROJECT_STATUS.md` (marketing page / `/your_events` / persistent identity).
 
-**Decided 2026-07-25:**
-- Non-admin identity uses **Supabase Auth**, not custom tables: **magic link (email)** for volunteers/officials, **native Supabase phone OTP** for captains — replacing the originally-planned custom Twilio serverless function + `otp_sessions` table. This *removes* work from Step 5 rather than adding to it.
-- The full role × resource × operation × org/event matrix is being scoped now rather than deferred indefinitely, but trimmed to real access patterns rather than a theoretical 22-table grid.
+**Superseded 2026-07-26:** The original captain identity plan (native Supabase phone OTP via Twilio) has been replaced. Root cause: the actual product requirement was never "prove phone ownership" — it was "check a team in fast at a desk, and let the captain enter/verify scores for the rest of the day without re-authenticating." Phone OTP solved a harder problem than the one that existed, and cost real money (Twilio) to do it. See "Part 1 — Revised" below.
+
+Volunteer/official identity (magic link, email) is unchanged from the original design and still applies as written further down.
 
 ---
 
-## Part 1 — Identity: replacing custom OTP with native Supabase Auth
+## Part 1 — Revised: Captain & player identity via QR + Supabase magic link
 
-### Captains — phone OTP (native)
-- Enable **Phone** provider in Supabase Auth dashboard, configure Twilio as the SMS provider (same Twilio account originally scoped for Step 5, just wired through Supabase instead of a custom function).
-- Client calls `supabase.auth.signInWithOtp({ phone })`, then `supabase.auth.verifyOtp({ phone, token, type: 'sms' })` — this replaces `otp.request()` / `otp.verify()` in `api.js` and the `otp_sessions` table entirely.
-- Result: a real `auth.users` row + `auth.uid()` for every captain, not a bespoke session object.
-- **Migration needed:** `players.auth_user_id` (nullable UUID, FK to `auth.users.id`) — set on first successful login, links the existing `players` row to the new identity. Existing `players` rows predate this and won't have it set until first login.
-- **Delete from roadmap:** `netlify/functions/send-otp.js`, the `otp_sessions` table/migration, and `otp.request`/`otp.verify` in `api.js` — all superseded.
-- **Open question:** phone number as the sole match key has the same typo/reuse risk called out in `PROJECT_STATUS.md`'s identity section — not solved here, carried forward.
+### The actual requirement (2026-07-26 working session)
 
-### Volunteers & officials — magic link (email)
-- `supabase.auth.signInWithOtp({ email })` — standard magic link, no SMS cost.
-- **Migration needed:** `volunteer_applications.auth_user_id` and a to-be-created `officials.auth_user_id`, same pattern as above.
+- Captain arrives at the registration desk, gets checked in with minimal friction — no password, no typed code.
+- Once checked in, that captain can submit/verify scores for the rest of the event from their own phone, without logging in again.
+- If a captain's phone is lost/dead/broken mid-event, a referee/admin can hand captaincy to another player on the roster, and that player can pick up scoring duties with equally low friction.
+- This is a convenience problem, not a security problem. The project owner is explicitly not concerned about someone falsely claiming to be a captain to submit a fake score — the existing dispute flow (away captain accept/dispute, referee resolves only on dispute) already provides the real check.
+
+### Design: unique QR code per player, encoding a Supabase magic link
+
+- Every `players` row (not just the captain — see "captaincy transfer" below) can have a magic link generated for it via `supabase.auth.admin.generateLink({ type: 'magiclink', email })`, called from a Netlify function using the **service role key** (never exposed client-side).
+- The "email" is synthetic, not a real inbox: `player_<player_id>@checkin.internal` (or similar), generated deterministically from the player row. No email is ever sent — the link itself is the credential, delivered via QR code instead of an inbox.
+- The generated link is encoded as a QR code. Scanning it (with the player's own phone camera) opens the site, exchanges the token for a real Supabase session, and that session persists via Supabase's normal refresh-token handling — no re-login for the rest of the day.
+- The same landing page doubles as the check-in confirmation screen: "Checking in for [event name] as [captain name] of [team name]?" → tap yes → `players.checked_in` (new column, see migration below) flips true and the session is now live on their device.
+
+### Distribution flow
+
+- **Primary:** a check-in kiosk screen (staff phone/tablet) where staff search/select a team from the roster; the screen displays that captain's QR. Captain scans with their own phone.
+- **Fallback (kiosk/device failure):** a pre-printed sheet of QR codes, one per captain, generated ahead of the event from the same `generateLink` mechanism. No behavioral difference to the captain — same code, different medium.
+- **Fallback (captain's own phone fails, pre-checkin):** staff manually mark the team checked in from the admin dashboard, bypassing the scan. No session is created for anyone in this case — acceptable, since the team simply isn't scoring yet.
+
+### Captaincy transfer (also the mid-event phone-failure fallback)
+
+- `players.is_captain` (existing boolean) can be flipped by an admin/referee/control_desk action: set the outgoing captain's `is_captain` to `false`, the incoming player's to `true`, single team-scoped update, RLS-gated to those roles.
+- Immediately after transfer, the admin/referee UI triggers the same `generateLink` flow for the new captain's `player_id` and displays the resulting QR on their own screen. New captain scans with their own phone → logged in → can submit/verify scores going forward.
+- This is deliberately the *same* mechanism as check-in, not a separate fallback path — one feature covers both "captain wants someone else to do it" and "captain's phone died."
+- Consequence: QR/magic-link generation must be callable for **any** `player_id` on a team, not gated to whoever was marked captain at registration time.
+
+### What this removes from the original plan
+
+- No Twilio account, no SMS cost, no phone-number-as-identity typo/reuse risk (carried in the original spec as an open, unsolved problem — this design removes the problem rather than solving it).
+- No Android-SMS-gateway workaround (textbee.dev, self-hosted `android-sms-gateway`, Tasker/AutoRemote) — considered and explicitly rejected in favor of the QR/magic-link approach, since it reuses Phase 1's already-built self-scoped RLS instead of introducing a new identity system.
+- Phase 0 (manual Supabase dashboard Twilio config) is no longer needed.
+
+### Migration needed (new, on top of Phase 1's `players.auth_user_id`)
+
+- `players.checked_in` — boolean, default `false`. Set true on confirmation-screen "yes," not on QR generation (a printed/displayed QR existing doesn't mean the person showed up).
+- No new migration needed for captaincy transfer — reuses the existing `players.is_captain` column.
+
+### What's reused, unchanged, from Phase 1 (already live via migrations 012/013)
+
+- `players.auth_user_id`, self-scoped RLS (a logged-in player can read/update their own row), and the phone-match linking trigger. Note: the linking trigger matched on phone number, which is no longer the relevant match key for login — this trigger becomes dead weight for the captain flow specifically (harmless to leave, since `auth_user_id` is now set directly by the magic-link exchange rather than needing to be inferred). Flag for cleanup, not urgent.
+
+### Open questions carried forward, not solved here
+
+- QR pre-generation vs. on-demand at the desk — either works technically; a pure workflow choice for the event owner, not a technical blocker.
+- Whether to visually invalidate/rotate a QR after first use (currently: no — a captain could re-scan their own code from a second device if needed, which is consistent with "convenience over security" framing).
+
+---
+
+## Part 2 — Volunteers & officials — magic link (email) — unchanged
+
+- `supabase.auth.signInWithOtp({ email })` — standard magic link, real inbox this time (volunteers/officials aren't scanning a code at a desk), no SMS cost.
+- **Migration needed:** `volunteer_applications.auth_user_id` and a to-be-created `officials.auth_user_id`, same pattern as captains. `volunteer_applications.auth_user_id` is already live via migration 013.
 - Officials table itself (referees/judges directory, distinct from `admin_users.referee` dashboard role and from `staff_contacts`) is still unbuilt — this spec only wires the auth side; the table design stays a separate task per `PROJECT_STATUS.md`.
 
-### RLS pattern for all three (new, not yet written)
-```sql
--- Example shape, not final SQL — one per self-scoped table
-CREATE POLICY "Self read own player row" ON players FOR SELECT USING (
-  auth_user_id = auth.uid()
-);
-CREATE POLICY "Self update own player row" ON players FOR UPDATE USING (
-  auth_user_id = auth.uid()
-) WITH CHECK (auth_user_id = auth.uid());
-```
-Each of these needs the same live-verification treatment as every prior RLS pass — the project's track record (010 shipping with a wrong policy name, 004/005 silently staying open) is the reason to test each one against the real anon-key/authenticated-key boundary before marking it done.
-
 ---
 
-## Part 2 — Entitlements Matrix
+## Part 3 — Entitlements matrix (role × resource × operation) — unchanged, not affected by Part 1's revision
 
-Collapsed from the full table list into 9 functional resource groups. "Full" = CRUD within scope boundary (org or event, per existing `is_org_admin_for`/`is_event_admin_for`). "—" = no access.
+*(Carried forward from the original spec as-is — see existing matrix and RLS-trim table below this line in the working doc. Not reproduced here since Part 1 is the only section that changed.)*
 
-| Actor | Org/Event Settings | Registrations & Payments | Teams & Players | Match Engine | Volunteers | Sponsors & Gift Basket | Local Svc/Staff | Publishing/Artifacts | Admin/Team Mgmt |
-|---|---|---|---|---|---|---|---|---|---|
-| **super_admin** | Full (all orgs) | Full | Full | Full | Full | Full | Full | Full | Full |
-| **org_admin** | Full (own org) | Full | Full | Full | Full | Full | Full | Full | Full (own org) |
-| **admin** (event-scoped) | Full (own event) | Full | Full | Full | Full | Full | Full | Full | Full (own event) |
-| **treasurer** | Read | Full | Read | — | — | Read | Read | — | — |
-| **volunteer_coord** | Read | — | — | — | Full | — | Read | — | — |
-| **referee** | Read | — | Read | Full (own event) | — | — | Read | — | — |
-| **control_desk** | Read | — | Update (check-in only) | Read | — | — | Read | — | — |
-| **player/captain** (self) | — | Read (own registration) | Read/Update (own team's active match score, submit + verify) | — | — | — | — | Read (published only) | — |
-| **volunteer** (self) | — | — | — | — | Read/Update (own application/shift status) | — | — | Read (published only) | — |
-| **official** (self) | — | — | — | *deferred* | — | — | Read (published rules artifact) | Read (published only) | — |
+## Suggested build order (revised 2026-07-26)
 
-### What's genuinely new work vs. what's just documentation
-- **New RLS, real work:** the 3 self-scoped rows (player, volunteer, official) — none of this exists today.
-- **Trim, real work:** treasurer/volunteer_coord/referee/control_desk currently get full org/event CRUD via the blanket `is_org_admin_for`/`is_event_admin_for` checks from migration 010 — the matrix above is *narrower* than what's live now. Narrowing = new policies replacing existing blanket ones, tested to confirm nothing that should still work breaks.
-- **No change needed:** super_admin/org_admin/admin rows — matches what's already built and verified.
-- **Not in this pass:** `official` match-engine access is marked deferred — it depends on the still-open Game Day role-scoped sub-permissions item (referee-specific view vs. admin-level controls) already flagged in `PROJECT_STATUS.md` as needing its own design pass.
-
----
-
-## Decision: static roles, not dynamic/self-serve (2026-07-25)
-
-Considered and explicitly rejected for v1: a `roles` + `role_entitlements` data model letting an org_admin invent new roles (e.g. "Fundraising Lead") through an admin-built wizard, with RLS checking a joined `has_entitlement()` lookup instead of a hardcoded role name.
-
-**Why rejected for now:** no org is waiting to self-serve a role tonight — there's no real forcing function yet. Against that, the dynamic model is a genuine rearchitecture (schema change to `admin_users`, every RLS policy rewritten to a joined helper, seed-migrating the 7 existing roles) that also opens a new class of risk: a bug in the entitlement-check join or the wizard itself could let someone grant broader access than intended — a scarier failure mode than "we haven't built a role yet," because it's not a missing feature, it's a live authorization bug. Not worth taking on for a need that doesn't exist yet.
-
-**What this means in practice:** roles stay hardcoded (`role` text column + explicit RLS policies, per the matrix above), same pattern as today. If a real second vertical or an organization's genuine self-serve need shows up later, that's the trigger to revisit — not before.
-
-### Recipe: adding a new hardcoded role (e.g. a conference's "speaker" or "host")
-
-Reference checklist for next time a new role is needed. ~30–60 min of well-understood work, not a redesign:
-
-1. **Decide its row in the matrix** — which of the 9 resource groups does it need, at what level (read/write/none)? Add it as a row to the Part 2 table above for the record.
-2. **Write the RLS policies** — one `CREATE POLICY` per resource group it touches (usually 1–3 for a narrow role), following the existing `is_org_admin_for()`/`is_event_admin_for()` template. Most new roles are narrow, so this is small.
-3. **Add it to `ROLE_TABS`** in `AdminDashboard.jsx` — one line, controls which tabs it sees.
-4. **Add it to the invite-role dropdown** — Team tab / `SuperAdminDashboard.jsx` — one line.
-5. **Live-verify** — log in as the new role, confirm it sees what it should and nothing more. Same standing rule as every other change in this project.
-
----
-
-## Suggested build order
-1. Enable Supabase Auth phone provider + Twilio SMS config (dashboard, no code)
-2. `players.auth_user_id`, `volunteer_applications.auth_user_id` migrations
-3. Swap `PlayerPortal.jsx`'s OTP calls to native `signInWithOtp`/`verifyOtp`; delete `otp_sessions` references
-4. Self-scoped RLS policies (player row, own match score update) — live-verify
-5. Volunteer magic-link flow + self-scoped RLS — live-verify
-6. Trim treasurer/volunteer_coord/referee/control_desk RLS to match the table above — live-verify each, since this *removes* access that currently works and regressions are easy to miss
-7. `officials` table + auth — separate follow-up, blocked on Game Day role redesign
+1. Migration: `players.checked_in` column.
+2. Netlify function: `generate-login-qr` — takes `player_id`, calls `supabase.auth.admin.generateLink` with the service role key, returns the link/token for QR encoding. Gated: callable by check-in kiosk flow (open, since it's pre-authentication by design) and by admin/referee actions (for reassignment) — confirm auth boundary on this function specifically, since it uses the service role key.
+3. Check-in landing page: exchanges the magic-link token for a session, shows confirmation screen, writes `checked_in = true` on confirm.
+4. Check-in kiosk UI: staff-facing team search/select → display QR (reuses function from step 2).
+5. Printed QR fallback sheet — batch-generate ahead of an event.
+6. Captaincy transfer UI (admin/referee): flip `is_captain`, trigger QR regeneration for new captain, display on screen.
+7. Volunteer magic-link flow + self-scoped RLS — live-verify (unchanged from original plan).
+8. Trim treasurer/volunteer_coord/referee/control_desk RLS to match the matrix in Part 3 — live-verify each, since this *removes* access that currently works and regressions are easy to miss.
+9. `officials` table + auth — separate follow-up, blocked on Game Day role redesign (unchanged).
