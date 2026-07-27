@@ -248,30 +248,20 @@ export const teams = {
     return data;
   },
 
-  async checkIn(teamId, adminUserId) {
-    const { data, error } = await supabase
-      .from("teams")
-      .update({
-        checked_in: true,
-        checked_in_at: new Date().toISOString(),
-        checked_in_by: adminUserId,
-      })
-      .eq("id", teamId)
-      .select()
-      .single();
+  // Phase 6: routed through a SECURITY DEFINER RPC (migration 019) rather
+  // than a raw .update() — referee/control_desk no longer have a blanket
+  // teams UPDATE grant, only this narrow, explicitly-columned action.
+  // checked_in_by is now set server-side from auth.uid() rather than a
+  // client-passed id (the previous adminUserId param was never actually
+  // passed by any call site, so checked_in_by was always null in practice).
+  async checkIn(teamId) {
+    const { error } = await supabase.rpc("team_set_checked_in", { p_team_id: teamId, p_checked_in: true });
     if (error) throw error;
-    return data;
   },
 
   async undoCheckIn(teamId) {
-    const { data, error } = await supabase
-      .from("teams")
-      .update({ checked_in: false, checked_in_at: null, checked_in_by: null })
-      .eq("id", teamId)
-      .select()
-      .single();
+    const { error } = await supabase.rpc("team_set_checked_in", { p_team_id: teamId, p_checked_in: false });
     if (error) throw error;
-    return data;
   },
 
   async assignPool(teamId, poolId) {
@@ -285,15 +275,10 @@ export const teams = {
     return data;
   },
 
+  // Phase 6: routed through a SECURITY DEFINER RPC (migration 019) — see checkIn().
   async markEliminated(teamId, finalRank) {
-    const { data, error } = await supabase
-      .from("teams")
-      .update({ eliminated: true, final_rank: finalRank })
-      .eq("id", teamId)
-      .select()
-      .single();
+    const { error } = await supabase.rpc("team_mark_eliminated", { p_team_id: teamId, p_final_rank: finalRank });
     if (error) throw error;
-    return data;
   },
 };
 
@@ -352,6 +337,113 @@ export const players = {
       .single();
     if (error) throw error;
     return data;
+  },
+
+  // ── QR/magic-link check-in (FEATURE_SPEC_entitlements_and_identity.md Phase 3) ──
+
+  // Reads the authenticated captain's own row via self-scoped RLS
+  // (migration 012) — no explicit id needed, RLS scopes to
+  // auth_user_id = auth.uid(). Only works after linkAuthOnCheckin() has run.
+  async getSelfForCheckin() {
+    const { data, error } = await supabase
+      .from("players")
+      .select("*, team:teams(name), event:events(name)")
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // Phase 3b: full session payload for CaptainDashboard, used both right
+  // after check-in confirm and on a later PlayerPortal.jsx page load with
+  // an already-linked session. Roster comes from the public players_public
+  // view (id/team_id/is_captain/full_name only — migration 014) since a
+  // captain has no RLS grant to read teammates' phone/email/shirt/dietary
+  // via the base players table; shirt/dietary are left blank here, same
+  // known gap the pre-Phase-2 otp.verify() flow had.
+  async getCaptainSessionData() {
+    const { data: self, error } = await supabase
+      .from("players")
+      .select("id, full_name, phone, team:teams(id, name, slogan, seed, checked_in, pool:pools(name))")
+      .single();
+    if (error) throw error;
+
+    const { data: roster, error: rosterError } = await supabase
+      .from("players_public")
+      .select("id, team_id, is_captain, full_name")
+      .eq("team_id", self.team.id);
+    if (rosterError) throw rosterError;
+
+    return {
+      name: self.full_name,
+      phone: self.phone,
+      playerId: self.id,
+      team: {
+        id: self.team.id,
+        name: self.team.name,
+        slogan: self.team.slogan || "",
+        pool: self.team.pool?.name || "",
+        seed: self.team.seed || 0,
+        checkedIn: self.team.checked_in || false,
+      },
+      roster: (roster || []).map((p) => ({
+        name: p.full_name,
+        role: p.is_captain ? "Captain" : "Player",
+        shirt: "",
+        dietary: "None",
+      })),
+    };
+  },
+
+  // First-time auth_user_id link — SECURITY DEFINER RPC (migration 018).
+  // The self-scoped UPDATE policy can't apply until this has run once,
+  // since auth_user_id starts NULL.
+  async linkAuthOnCheckin(playerId) {
+    const { error } = await supabase.rpc("link_player_auth_on_checkin", { player_id: playerId });
+    if (error) throw error;
+  },
+
+  async setCheckedIn(playerId) {
+    const { data, error } = await supabase
+      .from("players")
+      .update({ checked_in: true })
+      .eq("id", playerId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // Phase 6: routed through a SECURITY DEFINER RPC (migration 019),
+  // replacing the two raw .update() calls this had in Phase 4 — those
+  // relied on the blanket "Admin full players" policy, which no longer
+  // grants treasurer/volunteer_coord access, and never granted
+  // referee/control_desk anything beyond what "any event-scoped admin"
+  // meant at the time. The RPC does both updates atomically and checks
+  // admin/referee/control_desk for the team's event internally.
+  async transferCaptaincy(teamId, outgoingPlayerId, incomingPlayerId) {
+    const { error } = await supabase.rpc("transfer_captaincy", {
+      p_team_id: teamId,
+      p_outgoing_player_id: outgoingPlayerId,
+      p_incoming_player_id: incomingPlayerId,
+    });
+    if (error) throw error;
+  },
+
+  // Calls generate-login-qr Netlify function. Staffed-only as of Phase 3b
+  // — accessToken (an admin/referee/control_desk/org_admin/super_admin
+  // session token) is required; there is no unauthenticated call path.
+  async generateLoginQR(playerId, accessToken) {
+    const response = await fetch("/.netlify/functions/generate-login-qr", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ player_id: playerId }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Failed to generate check-in link");
+    return result; // { action_link }
   },
 };
 
@@ -728,6 +820,59 @@ export const volunteers = {
     if (error) throw error;
     return data;
   },
+
+  // ── Volunteer self-service portal (FEATURE_SPEC_entitlements_and_identity.md Phase 5) ──
+
+  // Sends a real magic-link email via Supabase's native passwordless auth.
+  // auth_user_id linking happens automatically afterward via migration
+  // 013's link_volunteer_auth_by_email() trigger (email-match, SECURITY
+  // DEFINER, fires on the resulting auth.users insert/lookup) — no client
+  // action needed, unlike the captain QR flow's manual linking RPC.
+  async requestLogin(email, eventId) {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/e/${eventId}/volunteer` },
+    });
+    if (error) throw error;
+  },
+
+  // Reads the authenticated volunteer's own row via self-scoped RLS
+  // (migration 013) — no explicit id needed, RLS scopes to
+  // auth_user_id = auth.uid(). Only returns a row once the email-match
+  // trigger has linked it (i.e. after the first successful magic-link
+  // sign-in for this address).
+  async getSelf() {
+    const { data, error } = await supabase
+      .from("volunteer_applications")
+      .select("*, primary_role:volunteer_roles!volunteer_applications_primary_role_id_fkey(title), assigned_role:volunteer_roles!volunteer_applications_assigned_role_id_fkey(title)")
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // Phase 6: routed through a SECURITY DEFINER RPC (migration 019),
+  // replacing a blanket-RLS-backed .update() — see that migration's Part E
+  // for why (the old "Self update own volunteer application" policy had
+  // no column restriction; a volunteer's own session could otherwise set
+  // status directly). The RPC sets all three fields every call, so pass
+  // through the current value for any field the caller isn't editing
+  // (VolunteerPortal.jsx does this for certifications, which it has no
+  // input for) — the RPC has no partial-update concept the way the old
+  // .update(allowed) call did.
+  async updateSelf(id, fields) {
+    const { error } = await supabase.rpc("update_own_volunteer_info", {
+      app_id: id,
+      p_phone: fields.phone ?? null,
+      p_experience: fields.experience ?? null,
+      p_certifications: fields.certifications ?? null,
+    });
+    if (error) throw error;
+  },
+
+  async withdraw(id) {
+    const { error } = await supabase.rpc("withdraw_own_volunteer_application", { app_id: id });
+    if (error) throw error;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -865,44 +1010,6 @@ export const announcements = {
       .update({ active: false })
       .eq("id", id);
     if (error) throw error;
-    return data;
-  },
-};
-
-// ═══════════════════════════════════════════════════════════
-// OTP AUTH (Captain Portal)
-// ═══════════════════════════════════════════════════════════
-
-export const otp = {
-  // Request OTP — calls serverless function which sends SMS via Twilio
-  async request(eventId, phone) {
-    const response = await fetch("/api/send-otp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId, phone }),
-    });
-    if (!response.ok) throw new Error("Failed to send OTP");
-    return response.json(); // { success: true, sessionId }
-  },
-
-  // Verify OTP code
-  async verify(sessionId, code) {
-    const { data, error } = await supabase
-      .from("otp_sessions")
-      .select("*, player:players(*, team:teams(*))")
-      .eq("id", sessionId)
-      .eq("otp_code", code)
-      .gt("expires_at", new Date().toISOString())
-      .single();
-
-    if (error || !data) throw new Error("Invalid or expired code");
-
-    // Mark as verified
-    await supabase
-      .from("otp_sessions")
-      .update({ verified: true, verified_at: new Date().toISOString() })
-      .eq("id", sessionId);
-
     return data;
   },
 };

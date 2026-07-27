@@ -3,7 +3,9 @@
 // Route Map:
 //   /e/:eventId           → Public landing page
 //   /e/:eventId/live      → Public game day hub
-//   /e/:eventId/captain   → Captain OTP login + scoring
+//   /e/:eventId/captain   → Captain scoring dashboard
+//   /e/:eventId/checkin   → QR/magic-link captain check-in (Phase 3)
+//   /e/:eventId/volunteer → Volunteer magic-link login + self-service (Phase 5)
 //   /e/:eventId/tv        → Clubhouse projector display
 //   /e/:eventId/admin     → Admin dashboard
 //   /wizard               → Tournament wizard (no eventId needed)
@@ -26,6 +28,8 @@ import AdminDashboard from "./views/AdminDashboard";
 import TVDisplay from "./views/TVDisplay";
 import LivePage from "./views/LivePage";
 import PlayerPortal from "./views/PlayerPortal";
+import CheckIn from "./views/CheckIn";
+import VolunteerPortal from "./views/VolunteerPortal";
 import TournamentWizard from "./tools/TournamentWizard";
 import Login from "./views/Login";
 import AcceptInvite from "./views/AcceptInvite";
@@ -179,6 +183,26 @@ export default function App() {
             <EventShell>
               <ConfigGate>
                 <PlayerPortal />
+              </ConfigGate>
+            </EventShell>
+          }
+        />
+        <Route
+          path="/e/:eventId/checkin"
+          element={
+            <EventShell>
+              <ConfigGate>
+                <CheckIn />
+              </ConfigGate>
+            </EventShell>
+          }
+        />
+        <Route
+          path="/e/:eventId/volunteer"
+          element={
+            <EventShell>
+              <ConfigGate>
+                <VolunteerPortal />
               </ConfigGate>
             </EventShell>
           }

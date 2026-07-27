@@ -1,6 +1,7 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
 
 # SPA fallback: React Router owns client-side routing, so every non-asset
 # path must serve index.html (otherwise direct nav / refresh on routes like

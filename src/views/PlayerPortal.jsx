@@ -1,13 +1,14 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
-  Trophy, Users, Phone, Shield, Check, X, Clock,
+  Trophy, Users, Shield, Check, X, Clock,
   ChevronRight, ArrowRight, AlertCircle, CircleDot,
   CheckCircle, XCircle, MapPin, Hash, Star, Zap,
-  LogOut, Award, Target, Lock, Send, Timer,
-  MessageSquare, RefreshCw, Shirt, Flag
+  LogOut, Award, Target, Send, Timer,
+  Shirt, Flag, QrCode
 } from "lucide-react";
 import { useEvent } from "../context/EventContext";
-import { otp, matches as matchesApi } from "../services/api";
+import { supabase } from "../supabaseClient";
+import { matches as matchesApi, players as playersApi } from "../services/api";
 import { useWatchMatch, useRealtimeMatches } from "../hooks/useRealtime";
 
 /* ═══════════════════════════════════════════════════════════
@@ -18,145 +19,26 @@ const badgeStyle = (c) => ({ display: "inline-flex", alignItems: "center", gap: 
 const btn = (bg, c = "#fff") => ({ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: bg, color: c, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 });
 
 /* ═══════════════════════════════════════════════════════════
-   SCREEN 1: PHONE ENTRY
+   NOT CHECKED IN YET: no valid linked session found on load — either
+   this captain never scanned their QR, or the session expired/signed
+   out. Phone-OTP login removed — superseded by the QR/magic-link
+   check-in flow (FEATURE_SPEC_entitlements_and_identity.md Phase 3).
+   A captain who *does* have a live session lands straight in
+   CaptainDashboard instead (see PlayerPortal's mount effect below) —
+   this is the "sensible non-error state" for everyone else.
    ═══════════════════════════════════════════════════════════ */
-function PhoneEntry({ onSubmit, otpError }) {
+function NoSession() {
   const { config } = useEvent();
   const B = config.brand;
-  const [phone, setPhone] = useState("");
-  const valid = phone.replace(/\D/g, "").length >= 10;
-
   return (
     <div className="fade-in" style={{ padding: "60px 24px", textAlign: "center" }}>
       <div style={{ width: 64, height: 64, borderRadius: 16, background: `${B.accent}15`, border: `1px solid ${B.accent}25`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
-        <Shield size={32} color={B.accent} />
+        <QrCode size={32} color={B.accent} />
       </div>
-      <h1 className="fd" style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginBottom: 8 }}>Captain Login</h1>
-      <p className="fb" style={{ fontSize: 14, color: "#ffffff60", marginBottom: 32, lineHeight: 1.5 }}>
-        Enter the phone number you registered with. We'll send a 6-digit code to verify.
+      <h1 className="fd" style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginBottom: 8 }}>Not Checked In Yet</h1>
+      <p className="fb" style={{ fontSize: 14, color: "#ffffff60", maxWidth: 320, margin: "0 auto", lineHeight: 1.5 }}>
+        Scan the QR code staff gave you at check-in to access your team dashboard.
       </p>
-
-      <div style={{ maxWidth: 320, margin: "0 auto" }}>
-        <label className="fb" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, textAlign: "left" }}>Phone Number</label>
-        <div style={{ position: "relative", marginBottom: 20 }}>
-          <Phone size={16} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#ffffff40" }} />
-          <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 250-555-0101"
-            style={{ width: "100%", padding: "14px 14px 14px 42px", background: "#ffffff08", border: "1px solid #ffffff15", borderRadius: 12, color: "#fff", fontSize: 16, fontFamily: "'Inter',sans-serif" }} />
-        </div>
-        <button onClick={() => valid && onSubmit(phone)} disabled={!valid}
-          style={{ ...btn(valid ? B.accent : "#ffffff15", valid ? B.dark : "#ffffff30") }}>
-          <Send size={16} /> Send Verification Code
-        </button>
-        {otpError && <p className="fb" style={{ fontSize: 12, color: "#ef4444", marginTop: 12 }}>{otpError}</p>}
-        <p className="fb" style={{ fontSize: 11, color: "#ffffff30", marginTop: 16 }}>
-          Standard SMS rates may apply. Code expires in 5 minutes.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   SCREEN 2: OTP VERIFICATION
-   ═══════════════════════════════════════════════════════════ */
-function OTPVerify({ phone, sessionId, onVerified, onBack }) {
-  const { config } = useEvent();
-  const B = config.brand;
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
-  const [error, setError] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const refs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()];
-
-  const verifyCode = async (digits) => {
-    setVerifying(true);
-    setError(false);
-    try {
-      const session = await otp.verify(sessionId, digits);
-      const player = session.player || session;
-      onVerified({
-        name: player.full_name || player.name,
-        phone: phone,
-        teamId: player.team?.id || player.team_id,
-        team: {
-          name: player.team?.name || "",
-          slogan: player.team?.slogan || "",
-          pool: player.team?.pool?.name || "",
-          seed: player.team?.seed || 0,
-          checkedIn: player.team?.checked_in || false,
-        },
-        // NOTE: otp.verify()'s query (api.js) does not nest team.players,
-        // so this will be empty until that query is updated to fetch the roster.
-        roster: player.team?.players?.map(p => ({
-          name: p.full_name || p.name,
-          role: p.is_captain ? "Captain" : "Player",
-          shirt: p.shirt_size || "",
-          dietary: p.dietary_needs || "None",
-        })) || [],
-      });
-    } catch (err) {
-      setVerifying(false);
-      setError(true);
-      setCode(["", "", "", "", "", ""]);
-      refs[0].current?.focus();
-      console.error("OTP verify failed:", err);
-    }
-  };
-
-  const handleDigit = (idx, val) => {
-    if (val.length > 1) val = val.slice(-1);
-    if (val && !/^\d$/.test(val)) return;
-    const next = [...code];
-    next[idx] = val;
-    setCode(next);
-    setError(false);
-    if (val && idx < 5) refs[idx + 1].current?.focus();
-    if (next.every(d => d !== "")) {
-      verifyCode(next.join(""));
-    }
-  };
-
-  const handleKeyDown = (idx, e) => {
-    if (e.key === "Backspace" && !code[idx] && idx > 0) {
-      refs[idx - 1].current?.focus();
-    }
-  };
-
-  return (
-    <div className="fade-in" style={{ padding: "60px 24px", textAlign: "center" }}>
-      <div style={{ width: 64, height: 64, borderRadius: 16, background: `${B.secondary}15`, border: `1px solid ${B.secondary}25`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
-        <Lock size={32} color={B.secondary} />
-      </div>
-      <h1 className="fd" style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginBottom: 8 }}>Enter Code</h1>
-      <p className="fb" style={{ fontSize: 14, color: "#ffffff60", marginBottom: 32 }}>
-        Sent to <strong style={{ color: "#fff" }}>{phone}</strong>
-      </p>
-
-      <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 24 }} className={error ? "shake" : ""}>
-        {code.map((d, i) => (
-          <input key={i} ref={refs[i]} type="text" inputMode="numeric" maxLength={1}
-            value={d} onChange={e => handleDigit(i, e.target.value)} onKeyDown={e => handleKeyDown(i, e)}
-            style={{
-              width: 48, height: 56, textAlign: "center", fontSize: 24, fontWeight: 900, fontFamily: "monospace",
-              background: verifying ? `${B.secondary}15` : "#ffffff08",
-              border: `2px solid ${error ? "#ef4444" : d ? B.accent + "60" : "#ffffff15"}`,
-              borderRadius: 12, color: "#fff",
-            }} />
-        ))}
-      </div>
-
-      {verifying && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 16 }}>
-          <RefreshCw size={14} color={B.secondary} style={{ animation: "spin 1s linear infinite" }} />
-          <span className="fb" style={{ fontSize: 13, color: B.secondary, fontWeight: 600 }}>Verifying...</span>
-        </div>
-      )}
-
-      {error && <p className="fb" style={{ fontSize: 13, color: "#ef4444", marginBottom: 16 }}>Invalid code. Please try again.</p>}
-
-      <div style={{ display: "flex", justifyContent: "center", gap: 16 }}>
-        <button onClick={onBack} className="fb" style={{ background: "none", border: "none", color: "#ffffff50", fontSize: 13, cursor: "pointer", fontFamily: "'Inter',sans-serif" }}>← Change number</button>
-        <button className="fb" style={{ background: "none", border: "none", color: B.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter',sans-serif" }}>Resend code</button>
-      </div>
     </div>
   );
 }
@@ -560,7 +442,7 @@ function CaptainDashboard({ captain, onLogout }) {
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
 export default function PlayerPortal() {
-  const { config, eventId } = useEvent();
+  const { config } = useEvent();
   const B = config.brand;
   const EVENT = config.event;
 
@@ -578,17 +460,61 @@ export default function PlayerPortal() {
 input:focus { outline: none; border-color: ${B.accent}88 !important; box-shadow: 0 0 0 3px ${B.accent}22; }
 `, [B.accent, B.secondary]);
 
-  const [screen, setScreen] = useState("phone"); // phone, otp, dashboard
-  const [phone, setPhone] = useState("");
-  const [sessionId, setSessionId] = useState(null);
+  // Phase 3b: on load, check for an already-linked session (set by
+  // CheckIn.jsx, potentially on an earlier visit — e.g. the captain
+  // closed the check-in tab and came back to /captain directly later the
+  // same day) and route straight into CaptainDashboard if one exists.
+  // No session at all is the sensible, non-error "not checked in yet"
+  // state — see NoSession — rather than something this effect treats as
+  // a failure.
   const [captain, setCaptain] = useState(null);
-  const [otpError, setOtpError] = useState(null);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkSession() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        setCheckingSession(false);
+        return;
+      }
+
+      try {
+        const data = await playersApi.getCaptainSessionData();
+        if (!cancelled) setCaptain(data);
+      } catch (err) {
+        // Session exists but isn't a linked captain identity (or the
+        // linked row can't be read) — fall through to NoSession rather
+        // than surfacing an error for what's a normal, expected state.
+        console.error("No captain session found:", err);
+      } finally {
+        if (!cancelled) setCheckingSession(false);
+      }
+    }
+
+    checkSession();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setCaptain(null);
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: B.dark, color: "#fff", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <style>{CSS}</style>
 
-      {screen === "phone" && (
+      {checkingSession && (
+        <div className="fade-in" style={{ padding: "80px 24px", textAlign: "center" }}>
+          <p className="fb" style={{ fontSize: 14, color: "#ffffff60" }}>Loading…</p>
+        </div>
+      )}
+
+      {!checkingSession && !captain && (
         <>
           <header style={{ padding: "12px 16px", borderBottom: "1px solid #ffffff10" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -601,54 +527,12 @@ input:focus { outline: none; border-color: ${B.accent}88 !important; box-shadow:
               </div>
             </div>
           </header>
-          <PhoneEntry
-            otpError={otpError}
-            onSubmit={async (p) => {
-              setPhone(p);
-              setOtpError(null);
-              try {
-                const result = await otp.request(eventId, p);
-                setSessionId(result.sessionId);
-                setScreen("otp");
-              } catch (err) {
-                // OTP serverless function not deployed yet — show error, don't crash
-                setOtpError("Unable to send verification code. Please try again later.");
-                console.error("OTP request failed:", err);
-              }
-            }}
-          />
+          <NoSession />
         </>
       )}
 
-      {screen === "otp" && (
-        <>
-          <header style={{ padding: "12px 16px", borderBottom: "1px solid #ffffff10" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 32, height: 32, borderRadius: 8, background: `${B.primary}30`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Trophy size={16} color={B.primary} />
-              </div>
-              <p className="fd" style={{ fontSize: 14, fontWeight: 900, color: "#fff" }}>{EVENT.name}</p>
-            </div>
-          </header>
-          <OTPVerify
-            phone={phone}
-            sessionId={sessionId}
-            onVerified={(captainData) => {
-              setCaptain(captainData);
-              setScreen("dashboard");
-            }}
-            onBack={() => { setScreen("phone"); setOtpError(null); }}
-          />
-        </>
-      )}
-
-      {screen === "dashboard" && captain && (
-        <CaptainDashboard captain={captain} onLogout={() => {
-          setScreen("phone");
-          setCaptain(null);
-          setSessionId(null);
-          setPhone("");
-        }} />
+      {captain && (
+        <CaptainDashboard captain={captain} onLogout={handleLogout} />
       )}
     </div>
   );

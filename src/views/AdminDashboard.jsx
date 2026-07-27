@@ -14,6 +14,7 @@ import {
   BadgeCheck, QrCode, Scissors, UserPlus, Copy, Globe
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import QRCode from "qrcode";
 import { useEvent } from "../context/EventContext";
 import { useAuth } from "../context/AuthContext";
 import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi } from "../services/api";
@@ -655,16 +656,39 @@ function RulesPanel() {
 /* ═══════════════════════════════════════════════════════════
    BUILD CONTEXT (MAIN)
    ═══════════════════════════════════════════════════════════ */
+// Phase 6b: Fundraising/Rules both write to the `events` table
+// (updateFundraising/updateRules), which migration 019 caps at Read for
+// treasurer/volunteer_coord. Hiding the whole sub-tab rather than showing
+// it read-only with the save button removed — this project's only
+// existing precedent for role-based access is whole-tab visibility
+// (ROLE_TABS, same file, ~40 lines below), not an in-page read-only mode,
+// so this extends that idiom one level down rather than introducing a
+// new one. Neither role has any legitimate read-only use for these tabs
+// today (fundraising % and rules content are both already visible
+// elsewhere — the stat cards above, and the public event page — so there
+// was no case for "show it, just disable the button" to fit).
+const BUILD_SUBTAB_VISIBILITY = {
+  treasurer: ["registrations"],
+  volunteer_coord: ["volunteers"],
+};
+
 function BuildContext() {
   const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
   const B = config.brand;
-  const [tab, setTab] = useState("registrations");
-  const tabs = [
+  const allTabs = [
     { id: "registrations", label: "Registrations", icon: Users },
     { id: "volunteers", label: "Volunteers", icon: HandHelping },
     { id: "fundraising", label: "Fundraising", icon: Heart },
     { id: "rules", label: "Rules", icon: BookOpen },
   ];
+  const visibleSubtabIds = BUILD_SUBTAB_VISIBILITY[adminUser?.role] || allTabs.map(t => t.id);
+  const tabs = allTabs.filter(t => visibleSubtabIds.includes(t.id));
+  const [tab, setTab] = useState(visibleSubtabIds[0]);
+
+  useEffect(() => {
+    if (!visibleSubtabIds.includes(tab)) setTab(visibleSubtabIds[0]);
+  }, [adminUser?.role]);
 
   const { data: rawRegs } = useRealtimeRegistrations(eventId);
   const [rawVols, setRawVols] = useState([]);
@@ -963,7 +987,13 @@ function FormatSimulator() {
    ═══════════════════════════════════════════════════════════ */
 function GameDayContext() {
   const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
   const B = config.brand;
+  // Phase 6b: control_desk is Read-only on Match Engine per the trimmed
+  // RLS (migration 019) — only team check-in and captaincy transfer are
+  // RPC-gated and still work for this role. Hiding rather than disabling
+  // the rest so control_desk doesn't see buttons that now silently fail.
+  const isControlDesk = adminUser?.role === "control_desk";
 
   // Realtime data
   const { teams: allTeams, checkedIn: checkedInTeams, loading: teamsLoading } = useRealtimeTeams(eventId);
@@ -1121,6 +1151,7 @@ function GameDayContext() {
   const tabs = [
     { id: "overview", label: "Overview", icon: LayoutGrid },
     { id: "simulator", label: "Format Simulator", icon: Sliders },
+    { id: "checkin", label: "Captain QR", icon: QrCode },
   ];
 
   return (
@@ -1158,6 +1189,13 @@ function GameDayContext() {
 
       {tab === "simulator" && <FormatSimulator />}
 
+      {tab === "checkin" && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <CaptainQRPanel teams={allTeams} />
+          <CaptainQRBatchPanel teams={allTeams} />
+        </div>
+      )}
+
       {tab === "overview" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
@@ -1188,7 +1226,13 @@ function GameDayContext() {
                     <div style={{ display: "flex", gap: 8 }}>
                       {!t.checked_in && !t.eliminated && <>
                         <button onClick={() => handleCheckIn(t.id)} style={S.btn("#22c55e")}><Check size={14} /> Check In</button>
-                        <button onClick={() => handleNoShow(t.id)} style={S.btnSm("#ef444420", "#ef4444")} title="No-show — award bye to opponent"><Ban size={14} /> No-Show</button>
+                        {/* No-Show calls matchesApi.awardBye(), which writes to `matches` —
+                            control_desk is Read-only there per migration 019, so this would
+                            silently fail for that role even though it's not literally
+                            "Match Engine" UI; hidden alongside it for the same reason. */}
+                        {!isControlDesk && (
+                          <button onClick={() => handleNoShow(t.id)} style={S.btnSm("#ef444420", "#ef4444")} title="No-show — award bye to opponent"><Ban size={14} /> No-Show</button>
+                        )}
                       </>}
                       {t.checked_in && <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Checked In</span>}
                       {t.eliminated && <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><Ban size={14} /> No-Show (bye awarded)</span>}
@@ -1232,27 +1276,275 @@ function GameDayContext() {
             </div>
           </div>
 
-          {/* Match Engine */}
-          <div style={{ ...S.card, marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Zap size={16} color={B.accent} /> Match Engine</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button onClick={handleGenerateBracket} style={S.btn("#ffffff10", "#ffffffaa")}><Shuffle size={14} /> Generate Bracket</button>
-              <button onClick={handleAssignAreas} style={S.btn("#ffffff10", "#ffffffaa")}><ArrowUpDown size={14} /> Assign Areas</button>
-              <button onClick={handleReassignCaptain} style={S.btn("#ffffff10", "#ffffffaa")}><RefreshCw size={14} /> Reassign Home Captain</button>
-              <button onClick={handleForceVerify} style={S.btn("#ffffff10", "#ffffffaa")}><CheckCircle size={14} /> Force Verify Score</button>
-              <button onClick={handleAwardBye} style={S.btn("#ffffff10", "#ffffffaa")}><SkipForward size={14} /> Award Bye</button>
-              <button onClick={handleResolveDispute} style={S.btn("#ffffff10", "#ffffffaa")}><AlertCircle size={14} /> Resolve Dispute</button>
+          {/* Match Engine — control_desk is Read-only here per migration 019
+              (Match Engine = Read for control_desk, Full for referee), so
+              these writes are hidden entirely rather than shown-then-failing. */}
+          {!isControlDesk && (
+            <div style={{ ...S.card, marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Zap size={16} color={B.accent} /> Match Engine</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <button onClick={handleGenerateBracket} style={S.btn("#ffffff10", "#ffffffaa")}><Shuffle size={14} /> Generate Bracket</button>
+                <button onClick={handleAssignAreas} style={S.btn("#ffffff10", "#ffffffaa")}><ArrowUpDown size={14} /> Assign Areas</button>
+                <button onClick={handleReassignCaptain} style={S.btn("#ffffff10", "#ffffffaa")}><RefreshCw size={14} /> Reassign Home Captain</button>
+                <button onClick={handleForceVerify} style={S.btn("#ffffff10", "#ffffffaa")}><CheckCircle size={14} /> Force Verify Score</button>
+                <button onClick={handleAwardBye} style={S.btn("#ffffff10", "#ffffffaa")}><SkipForward size={14} /> Award Bye</button>
+                <button onClick={handleResolveDispute} style={S.btn("#ffffff10", "#ffffffaa")}><AlertCircle size={14} /> Resolve Dispute</button>
+              </div>
             </div>
+          )}
+
+          {/* Announcements — same Match Engine bucket; control_desk gets Read only. */}
+          {!isControlDesk && (
+            <div style={S.card}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Bell size={16} color={B.accent} /> Announcements</h3>
+              <div style={{ display: "flex", gap: 10 }}>
+                <input style={{ ...S.input, flex: 1 }} placeholder="PA / TV ticker announcement..." value={announcementText} onChange={e => setAnnouncementText(e.target.value)} />
+                <button onClick={handleSendAnnouncement} disabled={sendingAnnouncement || !announcementText.trim()} style={S.btn(B.accent, B.dark)}><Send size={14} /> {sendingAnnouncement ? "Sending..." : "Send"}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CAPTAIN QR — staff-facing kiosk (FEATURE_SPEC_entitlements_and_
+   identity.md Phase 3, staffed-only per Phase 3b). Search/select a team,
+   generate its captain's QR/magic-link check-in code via the Netlify
+   function, always as the authenticated staff session — the unattended
+   shared-secret "kiosk" path was removed server-side in Phase 3b.
+   checked_in is informational only here (a status badge); re-issuing a
+   QR for an already-checked-in captain is allowed (lost phone, or Phase
+   4's captaincy transfer).
+   ═══════════════════════════════════════════════════════════ */
+function CaptainQRPanel({ teams }) {
+  const { config } = useEvent();
+  const { session } = useAuth();
+  const B = config.brand;
+
+  const [query, setQuery] = useState("");
+  const [selectedTeamId, setSelectedTeamId] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrFor, setQrFor] = useState(null); // { id, name } of the player the current QR was issued for
+  const [loading, setLoading] = useState(false);
+  const [transferringTo, setTransferringTo] = useState(null); // player id currently mid-transfer
+  const [error, setError] = useState(null);
+
+  const filtered = (teams || []).filter(t => (t.name || "").toLowerCase().includes(query.toLowerCase()));
+  const selectedTeam = (teams || []).find(t => t.id === selectedTeamId);
+  const captain = selectedTeam?.players?.find(p => p.is_captain);
+  const otherPlayers = (selectedTeam?.players || []).filter(p => !p.is_captain);
+
+  useEffect(() => {
+    setQrDataUrl(null);
+    setQrFor(null);
+    setError(null);
+  }, [selectedTeamId]);
+
+  const issueQR = async (playerId, playerName) => {
+    const { action_link } = await playersApi.generateLoginQR(playerId, session?.access_token);
+    const dataUrl = await QRCode.toDataURL(action_link, { width: 240, margin: 1 });
+    setQrDataUrl(dataUrl);
+    setQrFor({ id: playerId, name: playerName });
+  };
+
+  const handleGenerate = async () => {
+    if (!captain) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await issueQR(captain.id, captain.full_name);
+    } catch (err) {
+      console.error("Generate check-in QR failed:", err);
+      setError(err.message || "Failed to generate QR code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Phase 4: flip is_captain from the outgoing to the incoming player
+  // (team-scoped updates, gated by "Admin full players" today — see the
+  // Phase 4 report for the open note on that policy not yet being
+  // narrowed to admin/referee/control_desk specifically), then
+  // immediately issue and display the new captain's QR.
+  const handleTransfer = async (incoming) => {
+    if (!captain || !selectedTeam) return;
+    setTransferringTo(incoming.id);
+    setError(null);
+    try {
+      await playersApi.transferCaptaincy(selectedTeam.id, captain.id, incoming.id);
+      await issueQR(incoming.id, incoming.full_name);
+    } catch (err) {
+      console.error("Captaincy transfer failed:", err);
+      setError(err.message || "Failed to transfer captaincy.");
+    } finally {
+      setTransferringTo(null);
+    }
+  };
+
+  return (
+    <div style={S.card}>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        <QrCode size={16} color={B.accent} /> Captain Check-In QR
+      </h3>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div>
+          <input style={S.input} placeholder="Search team..." value={query} onChange={e => setQuery(e.target.value)} />
+          <div style={{ marginTop: 10, maxHeight: 320, overflowY: "auto", display: "grid", gap: 6 }}>
+            {filtered.map(t => {
+              const c = t.players?.find(p => p.is_captain);
+              return (
+                <button key={t.id} onClick={() => setSelectedTeamId(t.id)} style={{
+                  textAlign: "left", padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                  border: `1px solid ${selectedTeamId === t.id ? "#ffffff30" : "#ffffff10"}`,
+                  background: selectedTeamId === t.id ? "#ffffff10" : "#ffffff04", color: "#fff",
+                  fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                }}>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 700 }}>{t.name}</p>
+                    <p style={{ fontSize: 11, color: "#ffffff50" }}>{c?.full_name || "No captain set"}</p>
+                  </div>
+                  {c?.checked_in && <span style={S.badge("#22c55e")}>Checked in</span>}
+                </button>
+              );
+            })}
+            {filtered.length === 0 && <p style={{ fontSize: 12, color: "#ffffff40", padding: 10 }}>No teams match.</p>}
           </div>
 
-          {/* Announcements */}
-          <div style={S.card}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Bell size={16} color={B.accent} /> Announcements</h3>
-            <div style={{ display: "flex", gap: 10 }}>
-              <input style={{ ...S.input, flex: 1 }} placeholder="PA / TV ticker announcement..." value={announcementText} onChange={e => setAnnouncementText(e.target.value)} />
-              <button onClick={handleSendAnnouncement} disabled={sendingAnnouncement || !announcementText.trim()} style={S.btn(B.accent, B.dark)}><Send size={14} /> {sendingAnnouncement ? "Sending..." : "Send"}</button>
+          {selectedTeam && otherPlayers.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                Transfer Captaincy
+              </p>
+              <div style={{ display: "grid", gap: 6 }}>
+                {otherPlayers.map(p => (
+                  <button key={p.id} onClick={() => handleTransfer(p)} disabled={transferringTo !== null}
+                    style={{ ...S.btnSm("#ffffff08", "#ffffffaa"), justifyContent: "space-between", width: "100%" }}>
+                    <span>{p.full_name}</span>
+                    <span>{transferringTo === p.id ? "Transferring..." : "Make Captain"}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, minHeight: 260 }}>
+          {!selectedTeam && <p style={{ fontSize: 12, color: "#ffffff40", textAlign: "center" }}>Select a team to generate its captain's check-in QR.</p>}
+          {selectedTeam && !captain && <p style={{ fontSize: 12, color: "#ef4444", textAlign: "center" }}>This team has no captain set — assign one first.</p>}
+          {selectedTeam && captain && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {captain.checked_in
+                ? <span style={S.badge("#22c55e")}>Already checked in</span>
+                : <span style={S.badge("#6b7280")}>Not checked in yet</span>}
+            </div>
+          )}
+          {selectedTeam && captain && !qrDataUrl && (
+            <button onClick={handleGenerate} disabled={loading} style={S.btn(B.accent, B.dark)}>
+              {loading ? "Generating..." : captain.checked_in ? `Re-issue QR for ${captain.full_name}` : `Generate QR for ${captain.full_name}`}
+            </button>
+          )}
+          {qrDataUrl && qrFor && (
+            <>
+              <img src={qrDataUrl} alt="Captain check-in QR code" style={{ width: 220, height: 220, borderRadius: 12, background: "#fff", padding: 8 }} />
+              <p style={{ fontSize: 12, color: "#ffffffaa", textAlign: "center" }}>{qrFor.name} — {selectedTeam.name}</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <a href={qrDataUrl} download={`checkin-qr-${(selectedTeam.name || "team").replace(/\s+/g, "-")}.png`} style={{ ...S.btnSm("#ffffff10", "#ffffffaa"), textDecoration: "none" }}>
+                  <Download size={12} /> Download
+                </a>
+                <button onClick={() => issueQR(qrFor.id, qrFor.name)} style={S.btnSm("#ffffff10", "#ffffffaa")}>Regenerate</button>
+              </div>
+            </>
+          )}
+          {error && <p style={{ fontSize: 12, color: "#ef4444", textAlign: "center" }}>{error}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CAPTAIN QR — BATCH / PRINT (Phase 4). Generates every team's captain
+   QR ahead of time and lays them out as one printable sheet (grid of
+   QR + name + team) — format confirmed with project owner 2026-07-26
+   ("both": printable sheet as the primary view, plus per-captain
+   download). Each card also gets its own download link for staff who
+   want a per-team output instead of cutting up the sheet.
+   ═══════════════════════════════════════════════════════════ */
+function CaptainQRBatchPanel({ teams }) {
+  const { config } = useEvent();
+  const { session } = useAuth();
+  const B = config.brand;
+
+  const [items, setItems] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+
+  const captainedTeams = (teams || []).filter(t => t.players?.some(p => p.is_captain));
+
+  const handleGenerateAll = async () => {
+    setRunning(true);
+    setItems([]);
+    setProgress({ done: 0, total: captainedTeams.length });
+
+    const results = [];
+    for (const t of captainedTeams) {
+      const cap = t.players.find(p => p.is_captain);
+      try {
+        const { action_link } = await playersApi.generateLoginQR(cap.id, session?.access_token);
+        const dataUrl = await QRCode.toDataURL(action_link, { width: 200, margin: 1 });
+        results.push({ teamId: t.id, teamName: t.name, captainName: cap.full_name, checkedIn: cap.checked_in, dataUrl, error: null });
+      } catch (err) {
+        console.error(`Generate QR failed for team ${t.name}:`, err);
+        results.push({ teamId: t.id, teamName: t.name, captainName: cap.full_name, dataUrl: null, error: err.message || "Failed" });
+      }
+      setProgress(p => ({ ...p, done: p.done + 1 }));
+    }
+    setItems(results);
+    setRunning(false);
+  };
+
+  return (
+    <div style={S.card}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+          <Printer size={16} color={B.accent} /> Printed QR Fallback — All Captains
+        </h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleGenerateAll} disabled={running || captainedTeams.length === 0} style={S.btn(B.accent, B.dark)}>
+            {running ? `Generating ${progress.done}/${progress.total}...` : `Generate All (${captainedTeams.length})`}
+          </button>
+          {items.length > 0 && !running && (
+            <button onClick={() => window.print()} style={S.btn("#ffffff10", "#ffffffaa")}><Printer size={14} /> Print Sheet</button>
+          )}
+        </div>
+      </div>
+
+      {captainedTeams.length === 0 && (
+        <p style={{ fontSize: 13, color: "#ffffff40", textAlign: "center", padding: 20 }}>No teams with a captain set yet.</p>
+      )}
+
+      {items.length > 0 && (
+        <div className="qr-print-sheet" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 16 }}>
+          {items.map(it => (
+            <div key={it.teamId} style={{ textAlign: "center", padding: 12, borderRadius: 12, border: "1px solid #ffffff10", background: "#ffffff04" }}>
+              {it.dataUrl ? (
+                <img src={it.dataUrl} alt={`${it.captainName} check-in QR`} style={{ width: "100%", maxWidth: 150, borderRadius: 8, background: "#fff", padding: 6 }} />
+              ) : (
+                <p style={{ fontSize: 11, color: "#ef4444", padding: "30px 0" }}>Failed: {it.error}</p>
+              )}
+              <p style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginTop: 8 }}>{it.captainName}</p>
+              <p style={{ fontSize: 11, color: "#ffffff50" }}>{it.teamName}</p>
+              {it.checkedIn && <span style={{ ...S.badge("#22c55e"), marginTop: 4 }}>Checked in</span>}
+              {it.dataUrl && (
+                <a href={it.dataUrl} download={`checkin-qr-${(it.teamName || "team").replace(/\s+/g, "-")}.png`} style={{ display: "block", marginTop: 6, fontSize: 11, color: B.accent, textDecoration: "none" }}>
+                  Download
+                </a>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1443,7 +1735,12 @@ export default function AdminDashboard() {
     <div style={{ minHeight: "100vh", background: B.dark, color: "#fff", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #ffffff20; border-radius: 3px; }`}</style>
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #ffffff20; border-radius: 3px; }
+        @media print {
+          body * { visibility: hidden; }
+          .qr-print-sheet, .qr-print-sheet * { visibility: visible; }
+          .qr-print-sheet { position: absolute; top: 0; left: 0; width: 100%; }
+        }`}</style>
 
       <header style={{ borderBottom: "1px solid #ffffff10", background: `${B.dark}ee`, backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
