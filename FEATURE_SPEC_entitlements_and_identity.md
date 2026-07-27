@@ -52,6 +52,15 @@ Volunteer/official identity (magic link, email) is unchanged from the original d
 
 - `players.auth_user_id`, self-scoped RLS (a logged-in player can read/update their own row), and the phone-match linking trigger. Note: the linking trigger matched on phone number, which is no longer the relevant match key for login — this trigger becomes dead weight for the captain flow specifically (harmless to leave, since `auth_user_id` is now set directly by the magic-link exchange rather than needing to be inferred). Flag for cleanup, not urgent.
 
+### Auth boundary on QR/magic-link generation (decided 2026-07-26, revised 2026-07-26 after Phase 3 build)
+
+Original design assumed the kiosk might be unattended/self-serve and included a shared-secret pre-login path for that case. **Decided (revised): the kiosk is always staffed by a logged-in admin/referee/control_desk/org_admin/super_admin user — there is no unattended self-serve mode.** The shared-secret kiosk path was built in Phase 2 but is unused by any client code and should be removed rather than left as dead/reserved infrastructure (see Phase 3 follow-up in the work order).
+
+- **Single call path (authenticated staff):** requires a real admin/referee/control_desk/org_admin/super_admin Supabase session — the "Captain QR" tab inside the existing admin dashboard's Game Day context, visible to the same roles that already see Game Day. This is the only path that generates a QR, whether for initial check-in or for re-issuing/transferring a captain who's already checked in.
+- **`checked_in` is informational, not a hard gate, under this design** — since every issuance already requires an authenticated staff member with a reason to be there (new check-in, lost phone, or transfer), the earlier "refuse if already checked in" hardening (designed for the self-serve case) is no longer the load-bearing protection. The staff login itself is. The kiosk UI should still surface `checked_in` status so staff can see at a glance who's already in, but doesn't need to hard-block re-issuance on it.
+
+**Rationale retained from the original design (still applies):** self-scoped RLS means a misused session only exposes that one player's own PII (phone/email), not a broader crawl — but this project has twice shipped an RLS policy that granted broader access than intended (`registrations` and `players` public-read incidents). Requiring a real staff login for every issuance (rather than any open/shared-secret path) is the mitigation now, superseding the checked_in-gate approach.
+
 ### Open questions carried forward, not solved here
 
 - QR pre-generation vs. on-demand at the desk — either works technically; a pure workflow choice for the event owner, not a technical blocker.
