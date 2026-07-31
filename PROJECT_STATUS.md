@@ -1,6 +1,6 @@
 # Tournament Builder Platform — Project Status & Handoff
 
-**Last updated:** 2026-07-25 (end of session — publish-flow fixed and live-verified; live PII exposure on `players` found and fixed; team roster registration with per-player approval built end-to-end and live-verified, including two real bugs found and fixed during testing; identity work Phase 1 built, Phases 2-4 not started)
+**Last updated:** 2026-07-31 (Billing + Beneficiary Commitments work order (Phases 1–7, migrations 021–027) built since the 07-25 session; end-to-end verification pass found multiple confirmed bugs, one fully blocked phase, and one phase that doesn't appear to be deployed at all — see "Session Update — 2026-07-31" below. A phased fix work order now exists; fixes are being applied and live-verified one phase at a time, not all at once, given this project's repeated "documented as done ≠ actually done" history.)
 
 **Live URL:** https://cocomo-events.netlify.app (Git-linked to `main`, CI/CD active — every push auto-deploys)
 
@@ -8,7 +8,7 @@
 A multi-sport charity tournament management platform. Originally scoped for an Ebb Tide Rugby Club (ETRC) bocce tournament supporting Elder Fraud Prevention, generalized to support any organization running any sport's charity tournament.
 
 **GitHub Repo:** `cocomo-jamie/Tournament_Builder`
-**Database:** Supabase (schema deployed, 11 migrations — 010 corrected by 011; see below)
+**Database:** Supabase (schema deployed, 27 migrations — 010 corrected by 011, 013/012's linking triggers hotfixed by 020; see below)
 **Stack:** React (Vite) + Tailwind CSS + Supabase (PostgreSQL + Realtime + RLS + Auth) + Lucide Icons + React Router
 
 ---
@@ -29,12 +29,13 @@ A multi-sport charity tournament management platform. Originally scoped for an E
 | **Migration 010 fix (registrations public-read PII exposure)** | ✅ Fixed live + migration 011 | 010's DROP POLICY used the wrong policy name; public PII was readable with the anon key until tonight's manual fix — see below |
 | **Publish-event flow** | ✅ Done, live-verified | Draft events no longer throw a raw error publicly; `EventStatusCard` in Publish tab lets org_admin/admin/super_admin flip status. A real race-condition bug (config fetch firing before auth session restored) was found and fixed — see below. |
 | **Players PII exposure** | ✅ Fixed live + migration 014 | `"Public read players basic" USING (true)` exposed every player's phone/email to anyone with the anon key — same class of bug as the 2026-07-23 registrations incident, pre-existing, found during identity work. Fixed via a `players_public` view (id/team_id/is_captain/full_name only); admin and self-scoped reads unaffected. |
-| **Identity — Phase 1 (self-scoped RLS + linking triggers)** | ✅ Done, migrations 012/013 applied | `players.auth_user_id`/`volunteer_applications.auth_user_id` + self-scoped RLS + phone/email linking triggers, mirroring `handle_invite_signup`. Phases 2-4 (captain phone OTP swap, volunteer magic link, trimming treasurer/volunteer_coord/referee/control_desk RLS) **not started** — deprioritized in favor of the roster work below once it became clear team/player creation was fundamentally broken. |
+| **Identity — Phases 1–6 (self-scoped RLS, QR check-in, volunteer magic link, role-RLS trim)** | ⚠️ Built + applied live, verification checklist incomplete | Phase 1 (migrations 012/013) done 07-25. Phases 2–6 built and migrations 017–020 applied live 07-26/27 — captain phone OTP replaced with QR/magic-link check-in (deliberate redesign, not the original OTP plan), volunteer magic link, treasurer/volunteer_coord/referee/control_desk RLS narrowed to a real entitlements matrix. A hotfix (020) was needed — a `max(uuid)` bug in two linking triggers blocked **all** new Supabase Auth signups until fixed. As of session close 2026-07-27, the underlying build is confirmed working (QR generation succeeds live) but the **full manual verification checklist has not been completed** — see "Still outstanding" in the 2026-07-27 session below. Treat as built-not-verified, not done, until that checklist runs. |
 | **Team roster registration + per-player approval** | ✅ Done, live-verified | Full rebuild of team registration: spreadsheet upload (primary, `.csv`/`.xlsx` via SheetJS) or manual entry (secondary, collapsible cards), post-upload captain/coach role assignment, per-player approval on the Registrations page foldout, `teams.status` derived via DB trigger from player statuses. See below for what this replaced and the bugs found. |
 | 5: Serverless functions (OTP + Stripe) | Not started | Player Portal OTP shows graceful error; no backend exists |
 | 6: Artifact generation engine | Not started | Publish tab has hardcoded placeholder data |
 | 7: Deployment / hosting | ✅ Done, live-verified | Netlify, Git-linked CI/CD → https://cocomo-events.netlify.app. See "Deployment — Live" below. |
 | 8: Style extraction | Not started | Lower priority enhancement |
+| **Billing + Beneficiary Commitments (Phases 1–7)** | ⚠️ Built, **not** verified-working — see below | Migrations 021–027 applied live. E2E pass (2026-07-31) found: Phase 4 (public commitment notice) confirmed broken on all surfaces tested; Phase 5 (fulfillment evidence) fully blocked — no UI path exists to advance an event to `completed`; Phase 6 (ledger) has real gaps (no expense edit, expenses not wired to running total, no donation update/delete); Phase 7 (billing panels) not found anywhere in the deployed app despite migrations existing. Phases 2–3 have known open issues (verification labeling, inconsistent beneficiary-detail visibility). Fix work order in progress, one phase at a time — see below. |
 
 ---
 
@@ -171,7 +172,7 @@ Live-verified end-to-end: multi-player roster submission (both entry methods), p
 
 ### Still open, going into next session
 
-- **Identity work Phases 2-4** — captain phone OTP swap (replacing the still-dead `otp.request`/`otp.verify`/`otp_sessions` path), volunteer magic link, and trimming treasurer/volunteer_coord/referee/control_desk RLS to the matrix in `FEATURE_SPEC_entitlements_and_identity.md`. Phase 1 only.
+- ~~**Identity work Phases 2-4** — captain phone OTP swap (replacing the still-dead `otp.request`/`otp.verify`/`otp_sessions` path), volunteer magic link, and trimming treasurer/volunteer_coord/referee/control_desk RLS to the matrix in `FEATURE_SPEC_entitlements_and_identity.md`. Phase 1 only.~~ **Superseded 07-26/27 — see the Identity Sprint session update below.** The captain OTP plan itself was replaced (QR + magic link, not phone OTP) and Phases 2–6 were built and applied live, though full verification is still outstanding.
 - **Registration pause feature** (`FEATURE_SPEC_registration_pause.md`) — spec'd, not built.
 - **Marketing page / `/your_events`** (`FEATURE_SPEC_routing_and_landing.md` Parts 1-3) — only Part 0 (publish-fix) is done; the rest is unbuilt.
 - **Self-registration** (Path B in the roster spec) — deferred, confirmed additive/cheap to add later, not a foundation that needed building now.
@@ -249,7 +250,53 @@ A significant restructuring of the app's public/authenticated surface was scoped
 
 ---
 
-## Repository Structure (Current)
+## ⚠️ Session Update — 2026-07-26/27: Identity Sprint (QR check-in, magic link, RLS role trim) — built, hotfixed, not fully verified
+
+Original captain-identity plan (native Supabase phone OTP via Twilio) was **replaced mid-design 2026-07-26**: the real requirement was fast desk check-in + persistent same-day scoring access, not proof of phone ownership, and Twilio cost real money to solve a harder problem than the one that existed. New design: a unique QR code per player encoding a Supabase magic link (synthetic `player_<id>@checkin.internal` address, link delivered via QR not email), exchanged for a real session on scan. Volunteer/official identity (real email magic link) unchanged from the original plan.
+
+**Built and applied live (migrations 017–020, all confirmed applied via Supabase SQL Editor):**
+- 017 — `players.checked_in` column.
+- 018 — `link_player_auth_on_checkin()`, first-time `auth_user_id` linking for a captain's first QR scan (validates the caller's synthetic email matches the target `player_id` before linking, so one captain can't hijack another's row).
+- 019 — **highest-risk migration in this project to date.** Narrows `is_event_admin_for()`'s previously role-blind branch to `role = 'admin'` only, then re-grants exactly what a new entitlements matrix specifies per role (treasurer, volunteer_coord, referee, control_desk) — this *removes* access that previously worked for these four roles across ~20 tables. Also closed a real gap found along the way: volunteers could previously self-approve their own application by calling Supabase directly (the self-update RLS policy had no column restriction) — fixed via `SECURITY DEFINER` RPCs (`update_own_volunteer_info`, `withdraw_own_volunteer_application`) instead of a blanket UPDATE policy. Captaincy transfer and team check-in/no-show also moved to RPCs for the same reason.
+- 020 — **hotfix.** `link_volunteer_auth_by_email()` (013) and, found only via a full scan requested alongside the fix, `link_player_auth_by_phone()` (012) both called `max(uuid)`, which doesn't exist in Postgres — since both fire as `AFTER INSERT ON auth.users` triggers and any one throwing aborts the whole insert, **this blocked all new Supabase Auth signups of any kind**, not just the volunteer path that originally surfaced it. Fixed via a `count(*) = 1` guard + direct UPDATE, no aggregate.
+
+**Also built:** `CheckIn.jsx` (magic-link landing/confirm page), a "Captain QR" tab in Game Day (staff-authenticated kiosk, not the originally-spec'd unattended shared-secret path — decided during the build that staffed-only is correct and the self-serve path should be removed rather than left unused), `VolunteerPortal.jsx` + `/e/:eventId/volunteer` magic-link flow, `control_desk`'s Game Day UI trimmed to read-only (Match Engine/Announcements/No-Show hidden, not just RLS-blocked) and treasurer/volunteer_coord's Build tab trimmed to their one relevant sub-tab each. Dead OTP code (`otp.request`/`otp.verify`, `PhoneEntry`/`OTPVerify`) removed.
+
+**Deployment saga, 2026-07-27:** after the hotfix, QR generation still failed through a chain of separate issues found and fixed in sequence — all of Phases 2–6's work had sat **uncommitted locally** through the entire build/verify cycle (committed and pushed in one combined commit once found); local `npm run dev` testing was silently invalid for this feature since Netlify Functions don't run under plain Vite dev (needs `netlify dev`, not `npm run dev`, for local testing of any function-dependent feature going forward); and the deployed function crashed for missing server-side (non-`VITE_`-prefixed) env vars, which didn't exist on Netlify yet. Fixed by adding `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SITE_URL` to Netlify. **Confirmed working after all of the above — QR generation succeeds live.**
+
+**Still outstanding as of session close (2026-07-27) — the Phase 6 verification checklist itself was not completed, treat the whole sprint as built-not-verified until this is run:**
+- Treasurer invite signup retry (the flow originally blocked by the hotfixed bug) — not yet re-confirmed post-fix.
+- First-time captain check-in (real scan → session → confirm → dashboard hand-off) — not yet tested on a real device.
+- First-time volunteer login (real email → magic link → self-service view) — not yet tested.
+- Full per-role permission-boundary checklist (treasurer/volunteer_coord/referee/control_desk — exact expected CRUD boundaries listed in `CC_WORK_ORDER_identity.md`) — not yet run.
+- Migration 019 (the highest-risk one) was applied before the rest of the session's problems surfaced — given how much else was found broken that day, don't assume it's fine; verify rather than skip.
+
+**As of tonight (2026-07-31), none of the above appears to have been picked back up** — this session's testing focused on the billing/beneficiary work instead (see below). Worth deciding whether to close out this checklist before or after the billing/beneficiary fix work order, given it touches live auth for every non-super-admin role.
+
+---
+
+Between the 07-25 session and tonight, `CC_WORK_ORDER_billing_and_beneficiary.md` was executed against `FEATURE_SPEC_ledger_platform_fee_payments.md` and `FEATURE_SPEC_billing_and_beneficiary_commitments.md` — Phases 1–7 (beneficiaries + verification stub, commitment creation + publish gate, public commitment-notice surfaces, post-event fulfillment evidence, ledger, billing schema + manual-status UI). Migrations 021–027 written and manually applied live, same pattern as every other migration in this project.
+
+**This session's end-to-end verification pass (`billing_beneficiary_e2e_checklist.md`) found this feature is substantially less complete than "Phases 1–7 built" implies.** Consistent with this project's repeated pattern (see the 2026-07-22 process note above) — code existing/compiling is not the same as verified-working, and once again the gap was only found via direct live testing, not by trusting the work order's own phase reports.
+
+**Confirmed bugs:**
+- **Phase 4 — public commitment notice does not render anywhere.** Tested on two independently-built events (different orgs, different beneficiaries, both with published commitments) — the "Cause" section is absent from the public event page in both cases. This rules out the original "maybe it's just an empty state on a pre-feature event" theory; it's a real rendering or data-fetch bug. The other three required surfaces (team registration, volunteer application, invite-acceptance) haven't been individually confirmed broken yet, but are suspect given the shared likely root cause (see Known Issues below on RLS scoping of the new tables).
+- **Phase 6 — ledger has real functional gaps.** Expenses can be added/deleted but not edited. Expenses are tracked but **do not affect the running total at all** — only donations do. Donations can be created and read but not updated or deleted. Tab visibility and create/delete permission-gating are all confirmed correct.
+
+**Fully blocked, not a bug per se:**
+- **Phase 5 — post-event fulfillment evidence is entirely untestable.** There is no UI control anywhere, including super_admin, to advance an event's `status` past `registration_open` — the only transition ever given a UI control was the earlier publish-fix work (`draft → registration_open`). `registration_closed → game_day → completed → archived` have no admin control at all. This is not calendar/date-driven either — confirmed no scheduled-job infrastructure exists anywhere in this codebase. Phase 5's evidence-upload, review, confirm/dispute flow cannot be reached until this is built.
+
+**Appears not to be deployed at all:**
+- **Phase 7 — billing UI not found.** No BillingPanel anywhere in super_admin, no BillingSummaryCard on the org_admin Team tab, despite migrations 025/027 and the work order both describing this as built. Not yet reconciled whether the components don't exist in the codebase at all, or exist but aren't wired in/deployed.
+
+**Still-open items from earlier in the same testing pass, unresolved:**
+- Phase 2: the fake verification stub (format-check only, by design — see the original work order's decisions) marks a format-valid-but-fake registration number "Verified," which overstates the confidence the stub can actually back up. Needs a labeling decision, and separately a real manual-evidence verification path for org admins whose actual charity isn't in whatever registry data eventually exists — flagged as a new feature to design, not a quick patch.
+- Phase 3: an org_admin can see beneficiary registration details on one event but not another, inconsistently — not yet root-caused. Also newly found: **no way to edit a saved beneficiary commitment**, even while still in `draft`.
+- **New, separate from the phased feature:** creating a second event under an org that already has one throws an RLS violation (`42501`, `events` table). The actual RLS policy (`is_super_admin() OR is_org_admin_for(org_id)`) has no count/limit logic in it, so this doesn't look like an intended constraint — most likely explanation is an org_id mismatch somewhere in the wizard/session state, not yet confirmed.
+
+**Plan going forward:** a phased fix work order (`CC_WORK_ORDER_billing_beneficiary_fixes.md`) now exists, covering all of the above across 8 phases — two diagnostic phases first (the RLS block, the Phase 4 render bug's root cause), since they're blocking further live testing, then the rest in no particular required order. Given tonight's findings, **each phase is being sent to CC, verified live, and only then greenlit into the next phase** — not batched — deliberately slower than earlier sessions' pattern, in direct response to how much of "Phases 1–7 built" turned out not to actually work once tested. Progress on this will be logged here phase-by-phase as it happens, not as one final "done" claim at the end.
+
+---
 
 ```
 Tournament_Builder/
@@ -275,7 +322,22 @@ Tournament_Builder/
 │       ├── 007_auth_org_scoping.sql         # admin_users.org_id, invites table + trigger
 │       ├── 008_fix_reconciliation_code.sql  # SECURITY DEFINER fix for recon code generation
 │       ├── 009_registration_approval_audit.sql # approved_by column, admin_lock_queue table
-│       └── 010_rls_org_event_scoping.sql    # Pass 3: org/event-scoped RLS, retired 004/005/006 public policies
+│       ├── 010_rls_org_event_scoping.sql    # Pass 3: org/event-scoped RLS, retired 004/005/006 public policies
+│       ├── 011_fix_registrations_public_read_drop.sql
+│       ├── 012_player_self_identity.sql
+│       ├── 013_volunteer_self_identity.sql
+│       ├── 014_players_public_view.sql      # PII fix — players_public view
+│       ├── 015_team_roster_status.sql
+│       ├── 016_team_status_derivation.sql
+│       ├── 017_players_checked_in.sql       # QR check-in identity sprint
+│       ├── 018_link_player_auth_on_checkin.sql
+│       ├── 019_trim_role_rls.sql            # HIGHEST RISK migration — narrows treasurer/volunteer_coord/referee/control_desk RLS
+│       ├── 020_fix_volunteer_link_max_uuid.sql  # hotfix, blocked ALL new signups until applied
+│       ├── 021_beneficiaries_and_commitments.sql
+│       ├── 022–024_*.sql                    # ledger tables + fulfillment tracking (billing/beneficiary work)
+│       ├── 025_billing_tables.sql
+│       ├── 026_*.sql
+│       └── 027_org_subscriptions_created_at.sql
 ├── src/
 │   ├── main.jsx
 │   ├── index.css
@@ -355,27 +417,44 @@ Tournament_Builder/
 9. **No persistent person identity across registrations.** A player/volunteer/official who participates in multiple events or orgs currently exists as multiple disconnected rows, not one entity — see "Architecture Decisions — 2026-07-23" above.
 10. **No auth/access mechanism for non-admin users** beyond captain phone OTP — volunteers, non-captain players, and referees/officials have no way to authenticate or view "their" tournaments. Direction is set (see above) but not designed or built.
 11. **No entitlements/CRUD matrix.** Every admin role currently has full CRUD within its RLS-defined scope; there's no product-defined restriction of e.g. treasurer-to-payments-only or referee-to-game-day-only (this overlaps with, and should probably be resolved together with, issue #1 above).
-12. **No billing/payment schema of any kind.** Marketing page pricing is display-only. Centralized-vs-decentralized payment collection is an open business/legal question (see Architecture Decisions above) that needs to be resolved before any billing schema work starts.
+12. **No billing/payment schema of any kind.** ~~Marketing page pricing is display-only.~~ **Superseded 2026-07-31** — a billing schema now exists (migrations 025/027) but the corresponding UI (BillingPanel/BillingSummaryCard) is not confirmed present in the deployed app; see Session Update 2026-07-31. Centralized-vs-decentralized payment collection remains an open business/legal question (see Architecture Decisions above) not yet resolved.
+13. **Public beneficiary commitment notice does not render.** Confirmed on two independent test events with published commitments — the public event page's Cause section, and (not yet individually confirmed but suspect) the team registration, volunteer application, and invite-acceptance surfaces. See Session Update 2026-07-31.
+14. **No UI path to advance an event past `registration_open`.** Blocks all post-event fulfillment-evidence testing (Phase 5 of the billing/beneficiary work) and likely blocks any other future feature keyed off `registration_closed`/`game_day`/`completed`/`archived`. Not calendar-driven — no scheduled-job infra exists in this project.
+15. **Ledger (Phase 6 of billing/beneficiary work) has functional gaps.** No expense edit; expenses don't affect the running total; no donation update/delete. See Session Update 2026-07-31.
+16. **Beneficiary commitments can't be edited once created**, even while still `draft`. Minor, but worth fixing alongside the Phase 3 investigation below.
+17. **Second event under an existing org throws an RLS `42501` on `events` insert.** The RLS policy itself has no count/limit logic, so this doesn't look intentional — likely an org_id mismatch somewhere in the wizard/session flow, not yet root-caused.
 
 ---
 
 ## Proposed Schedule (Next Session)
 
-Deployment (formerly item 1 here) is done — see "Deployment — Live" above. Priorities reordered given tonight's architecture decisions:
+**Immediate priority, superseding everything below until it's resolved:** work through `CC_WORK_ORDER_billing_beneficiary_fixes.md` one phase at a time — send Phase 1 to CC, live-verify the result, only then greenlight Phase 2, and so on through Phase 8. Do not batch phases. This doc will be updated after each phase with a pass/fail, not just at the end.
 
-1. **Publish-event UI + graceful not-found/not-published handling** — small, unblocks real usage; two of tonight's Known Issues (#6, #7) and worth fixing before anything else since it affects every other test going forward.
-2. **Marketing page (`/`) + `/your_events` build-out** — per "Architecture Decisions — 2026-07-23" above. Suggest sequencing as: (a) marketing page with static pricing content, (b) `/your_events` for admin roles only first (reuses existing role data), (c) branding system split (platform skin vs. event skin), (d) non-admin identity/link mechanism last, since it's the least-defined piece and has real open design questions.
-3. **Entitlements/CRUD matrix** — design doc first (role × resource × operation × scope), then map onto existing RLS scope functions. Explicitly deferred by the user as a "tomorrow problem," not urgent, but should land before the identity work in step 2(d) makes the permission surface bigger.
-4. **Step 5 — Serverless functions**: Twilio (OTP SMS) and Stripe (payments) — needed for Player Portal captain login and real payment processing to actually function. **Note:** "Stripe" here is event-level payments only (a team paying its entry fee) — this is a different, smaller thing than the org-level SaaS billing question raised in Architecture Decisions, which needs a legal/business decision first and is not in scope for this step.
-5. **Step 6 — Artifact generation engine**: real schedule/run-sheet/resource-directory generation for the Publish tab.
+**Competing priority, not yet scheduled — flagging rather than deciding:** the Identity Sprint's own Phase 6 verification checklist (07-26/27) was never completed either, and it touches live auth for every non-super-admin role including the highest-risk RLS migration in the project (019). Worth a deliberate decision on sequencing — finish that checklist before starting the billing/beneficiary fixes, interleave them, or explicitly accept the risk of leaving it unverified a while longer — rather than letting it default to "whichever gets mentioned last."
 
-Steps 4–5 are bigger lifts; reserved Fable 5 credits ($140) may be worth spending there per earlier discussion, once the platform-shell work (item 2) has a stable foundation to build artifact generation against.
+1. **Phase 1** — diagnose the second-event RLS block (org_id mismatch vs. real RLS bug).
+2. **Phase 2** — root-cause and fix the Phase 4 public commitment-notice render bug (all four surfaces).
+3. **Phase 3** — build an event status-advance control past `registration_open`, unblocking Phase 5 fulfillment-evidence testing.
+4. **Phase 4** — reconcile whether the Phase 7 billing UI exists in the codebase at all, and if so why it isn't deployed.
+5. **Phase 5** — ledger fixes: expense edit, expenses wired into the running total, donation update/delete.
+6. **Phase 6** — allow editing a beneficiary commitment while still `draft`.
+7. **Phase 7** — investigate the Phase 3 inconsistent beneficiary-visibility bug.
+8. **Phase 8** — design decision only (not a build task): fake-verification labeling + whether a manual evidence-based verification path is wanted.
+
+**Once the above is fully closed out and re-verified, resume the pre-existing backlog** (unchanged from the 07-25 session, reordered slightly):
+
+1. **Marketing page (`/`) + `/your_events` build-out** — per "Architecture Decisions — 2026-07-23" above. Suggest sequencing as: (a) marketing page with static pricing content, (b) `/your_events` for admin roles only first (reuses existing role data), (c) branding system split (platform skin vs. event skin), (d) non-admin identity/link mechanism last, since it's the least-defined piece and has real open design questions.
+2. **Entitlements/CRUD matrix** — design doc first (role × resource × operation × scope), then map onto existing RLS scope functions. Still deferred, but worth doing before the identity work in step 1(d) makes the permission surface bigger — and now also relevant to the billing/beneficiary RLS gaps found tonight.
+3. **Step 5 — Serverless functions**: Twilio (OTP SMS) and Stripe (payments) — needed for Player Portal captain login and real payment processing to actually function. **Note:** "Stripe" here is event-level payments only (a team paying its entry fee) — this is a different, smaller thing than the org-level SaaS billing question raised in Architecture Decisions, which needs a legal/business decision first and is not in scope for this step. Also distinct from the billing/beneficiary work's Phase 7, which is Cocomo's own subscription revenue (currently hand-set, no real Stripe integration either).
+4. **Step 6 — Artifact generation engine**: real schedule/run-sheet/resource-directory generation for the Publish tab.
+
+Steps 3–4 are bigger lifts; reserved Fable 5 credits ($140) may be worth spending there per earlier discussion, once the platform-shell work (item 1) has a stable foundation to build artifact generation against.
 
 ---
 
 ## Service Layer (src/services/api.js)
 
-Domains: `events`, `registrations` (+ `setPaymentReceived`/`setApproved`), `teams`, `players`, `matches`, `pools`, `brackets`, `sponsors`, `volunteers`, `giftBasket`, `localServices`, `artifacts`, `announcements`, `activityLog`, `otp`, `admin` (auth/invites).
+Domains: `events`, `registrations` (+ `setPaymentReceived`/`setApproved`), `teams`, `players`, `matches`, `pools`, `brackets`, `sponsors`, `volunteers`, `giftBasket`, `localServices`, `artifacts`, `announcements`, `activityLog`, `admin` (auth/invites), `beneficiaries`, `billing`. (`otp` domain removed 07-26 — dead code from the pre-QR captain-identity design, superseded by the QR/magic-link check-in flow; see Identity Sprint session update.)
 
 ## Hooks (src/hooks/)
 
@@ -383,6 +462,6 @@ Domains: `events`, `registrations` (+ `setPaymentReceived`/`setApproved`), `team
 - `useEventConfig.js` — fetches + transforms event config for `EventContext`
 - `useScreenLock.js` — FIFO lock queue with heartbeat presence + idle timeout
 
-## Database (supabase/schema.sql + 10 migrations)
+## Database (supabase/schema.sql + 27 migrations)
 
-22 core tables + `activity_log`, `invites`, `admin_lock_queue`. RLS now org/event-scoped per admin (migration 010 — see above; per-role table restrictions within a scope remain a flagged future item), realtime enabled on `matches`, `pool_standings`, `playing_areas`, `teams`, `announcements`, `playing_area_queue`, `admin_lock_queue`. Key triggers: reconciliation code generation (now `SECURITY DEFINER`, atomic), invite-signup → admin_users auto-creation (`SECURITY DEFINER`), pool standings recomputation, fundraising totals, volunteer role fill counts.
+22 core tables from the original schema + `activity_log`, `invites`, `admin_lock_queue`, plus `beneficiaries`, `event_beneficiary_commitments`, `billing_plans`, `org_subscriptions`, `event_billing`, and the ledger tables (`transactions`/`fan_donations`/`expenses`) from the billing/beneficiary work. RLS org/event-scoped per admin since migration 010, further narrowed per-role for treasurer/volunteer_coord/referee/control_desk by migration 019 (see Identity Sprint session update — verification still incomplete). Realtime enabled on `matches`, `pool_standings`, `playing_areas`, `teams`, `announcements`, `playing_area_queue`, `admin_lock_queue`. Key triggers/RPCs: reconciliation code generation (`SECURITY DEFINER`, atomic), invite-signup → admin_users auto-creation, pool standings recomputation, fundraising totals, volunteer role fill counts, QR check-in auth linking (migration 018), captaincy transfer/team check-in RPCs (migration 019).
