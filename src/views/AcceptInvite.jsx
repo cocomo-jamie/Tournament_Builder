@@ -4,6 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { UserPlus, AlertCircle, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { admin as adminApi } from "../services/api";
+import BeneficiaryCommitmentNotice from "../components/BeneficiaryCommitmentNotice";
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams();
@@ -100,6 +101,12 @@ export default function AcceptInvite() {
           </p>
           <p style={{ fontSize: 12, color: "#ffffff40", marginTop: 4 }}>{invite.email}</p>
         </div>
+
+        {invite.event_id && (
+          <div style={{ marginBottom: 20 }}>
+            <BeneficiaryCommitmentNotice eventId={invite.event_id} />
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>

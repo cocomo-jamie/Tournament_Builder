@@ -923,6 +923,258 @@ export const sponsors = {
 };
 
 // ═══════════════════════════════════════════════════════════
+// BENEFICIARIES (org-scoped — a beneficiary belongs to the org
+// that vouches for it, reusable across that org's events)
+// ═══════════════════════════════════════════════════════════
+
+export const beneficiaries = {
+  async listByOrg(orgId) {
+    const { data, error } = await supabase
+      .from("beneficiaries")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  async create(orgId, beneficiaryData) {
+    const { data, error } = await supabase
+      .from("beneficiaries")
+      .insert({ org_id: orgId, ...beneficiaryData })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from("beneficiaries")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════
+// EVENT BENEFICIARY COMMITMENTS
+// ═══════════════════════════════════════════════════════════
+
+export const commitments = {
+  async listByEvent(eventId) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .select("*, beneficiary:beneficiaries(*)")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  // Used by the publish-flow gate — a charity event needs at least one
+  // published commitment before it can go live.
+  async getPublished(eventId) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .select("*, beneficiary:beneficiaries(*)")
+      .eq("event_id", eventId)
+      .eq("status", "published")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async create(eventId, commitmentData) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .insert({ event_id: eventId, ...commitmentData })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // Post-event fulfillment evidence (spec §4). Private bucket (migration
+  // 023) — `url` in the returned {url, filename, uploaded_at} entries is
+  // a bucket-relative path, NOT a public URL. Call getEvidenceSignedUrl()
+  // to get something displayable.
+  async uploadEvidenceFile(eventId, file) {
+    const path = `${eventId}/${Date.now()}-${file.name}`;
+    const { error } = await supabase.storage.from("beneficiary-evidence").upload(path, file);
+    if (error) throw error;
+    return { url: path, filename: file.name, uploaded_at: new Date().toISOString() };
+  },
+
+  async getEvidenceSignedUrl(path) {
+    const { data, error } = await supabase.storage.from("beneficiary-evidence").createSignedUrl(path, 3600);
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  // Org-side submission — sets fulfillment_status: 'submitted'.
+  async submitEvidence(id, { evidenceFiles, evidenceDescription }) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .update({
+        fulfillment_status: "submitted",
+        evidence_submitted_at: new Date().toISOString(),
+        evidence_files: evidenceFiles,
+        evidence_description: evidenceDescription,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // super_admin review — confirmed or disputed.
+  async reviewEvidence(id, fulfillmentStatus, reviewedBy) {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .update({
+        fulfillment_status: fulfillmentStatus,
+        reviewed_by: reviewedBy,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  // super_admin queue — every commitment awaiting evidence review, across
+  // all orgs/events. RLS covers this (is_event_admin_for's first branch
+  // is is_super_admin(), so no org/event filter is needed here).
+  async listSubmittedForReview() {
+    const { data, error } = await supabase
+      .from("event_beneficiary_commitments")
+      .select("*, beneficiary:beneficiaries(*), event:events(name, org_id, organizations(name))")
+      .eq("fulfillment_status", "submitted")
+      .order("evidence_submitted_at", { ascending: true });
+    if (error) throw error;
+    return data;
+  },
+
+  // Public-safe read (anon or authenticated) — migration 022's
+  // beneficiary_commitments_public view, published commitments only,
+  // beneficiary_name + commitment_text only. Used by
+  // BeneficiaryCommitmentNotice on the four public/registration surfaces.
+  async getPublicNotice(eventId) {
+    if (!eventId) return null;
+    const { data, error } = await supabase
+      .from("beneficiary_commitments_public")
+      .select("beneficiary_name, commitment_text")
+      .eq("event_id", eventId)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════
+// LEDGER (bookkeeping only — no payment routing)
+// ═══════════════════════════════════════════════════════════
+
+export const expenses = {
+  async list(eventId) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  async create(eventId, expenseData) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert({ event_id: eventId, ...expenseData })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async remove(id) {
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+    if (error) throw error;
+  },
+};
+
+export const fanDonations = {
+  async list(eventId) {
+    const { data, error } = await supabase
+      .from("fan_donations")
+      .select("*, team:teams(name)")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  async create(eventId, donationData) {
+    const { data, error } = await supabase
+      .from("fan_donations")
+      .insert({ event_id: eventId, ...donationData })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+export const transactions = {
+  async list(eventId) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+
+  async create(eventId, orgId, transactionData) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .insert({ event_id: eventId, org_id: orgId, ...transactionData })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════
 // ARTIFACTS
 // ═══════════════════════════════════════════════════════════
 
@@ -1190,6 +1442,109 @@ export const admin = {
     const { data, error } = await supabase
       .from("organizations")
       .insert({ name, email })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════
+// BILLING (super_admin only — schema + manually-set status, no
+// real Stripe integration for Cocomo's own subscription revenue)
+// ═══════════════════════════════════════════════════════════
+
+export const billing = {
+  // Org-scoped reads — used by the org_admin's own view (RLS restricts
+  // these to the caller's own org regardless of the orgId passed in).
+  async getSubscriptionForOrg(orgId) {
+    const { data, error } = await supabase
+      .from("org_subscriptions")
+      .select("*, billing_plans(name, type, price, event_limit)")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async listEventBillingForOrg(orgId) {
+    const { data, error } = await supabase
+      .from("event_billing")
+      .select("*, events(name)")
+      .eq("org_id", orgId)
+      .order("status");
+    if (error) throw error;
+    return data;
+  },
+
+  async listPlans() {
+    const { data, error } = await supabase
+      .from("billing_plans")
+      .select("*")
+      .eq("active", true)
+      .order("price");
+    if (error) throw error;
+    return data;
+  },
+
+  async listSubscriptions() {
+    const { data, error } = await supabase
+      .from("org_subscriptions")
+      .select("*, organizations(name), billing_plans(name, type, price)")
+      .order("current_period_end", { ascending: false, nullsFirst: true });
+    if (error) throw error;
+    return data;
+  },
+
+  async createSubscription(orgId, planId, status) {
+    const { data, error } = await supabase
+      .from("org_subscriptions")
+      .insert({ org_id: orgId, plan_id: planId, status })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateSubscriptionStatus(id, status) {
+    const { data, error } = await supabase
+      .from("org_subscriptions")
+      .update({ status })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async listEventBilling() {
+    const { data, error } = await supabase
+      .from("event_billing")
+      .select("*, events(name), organizations(name)")
+      .order("status");
+    if (error) throw error;
+    return data;
+  },
+
+  async createEventBilling(eventId, orgId, billingType, amount) {
+    const { data, error } = await supabase
+      .from("event_billing")
+      .insert({ event_id: eventId, org_id: orgId, billing_type: billingType, amount: amount || null })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateEventBillingStatus(id, status) {
+    const updates = { status };
+    if (status === "paid") updates.paid_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("event_billing")
+      .update(updates)
+      .eq("id", id)
       .select()
       .single();
     if (error) throw error;

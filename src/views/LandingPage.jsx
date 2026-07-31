@@ -9,6 +9,7 @@ import {
 import { useEvent } from "../context/EventContext";
 import { registrations, teams, players, volunteers } from "../services/api";
 import TeamRosterSection from "../components/TeamRosterSection";
+import BeneficiaryCommitmentNotice from "../components/BeneficiaryCommitmentNotice";
 
 const formatDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
@@ -130,6 +131,10 @@ function Cause() {
           ))}
         </div>
         <p className="fb" style={{ textAlign: "center", fontSize: 15, fontWeight: 600, color: C.brand.accent, fontStyle: "italic", maxWidth: 600, margin: "0 auto" }}>{C.cause.closing}</p>
+
+        <div style={{ maxWidth: 600, margin: "24px auto 0" }}>
+          <BeneficiaryCommitmentNotice eventId={eventId} isCharity={C.cause.isCharity} accent={C.brand.accent} />
+        </div>
       </div>
     </section>
   );
@@ -398,6 +403,10 @@ function RegistrationForm({ formRef }) {
           <p className="fb" style={{ fontSize: 14, color: "#ffffff60", marginTop: 8 }}>Deadline: <strong style={{ color: C.brand.accent }}>{formatDate(C.registration.deadline)}</strong> · ${C.registration.fee}/team</p>
         </div>
 
+        <div style={{ marginBottom: 24 }}>
+          <BeneficiaryCommitmentNotice eventId={eventId} isCharity={C.cause.isCharity} accent={C.brand.accent} />
+        </div>
+
         {/* Team Identity */}
         <FormCard icon={Trophy} title="Team Identity">
           <div style={{ marginBottom: 16 }}><label style={LBL}>Team Name *</label><input style={INP} value={t.teamName} onChange={e => u("teamName", e.target.value)} placeholder="The Pallino Pushers" /></div>
@@ -587,6 +596,10 @@ function Volunteers() {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <h2 className="fd" style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginBottom: 8 }}>Want to Help?</h2>
           <p className="fb" style={{ fontSize: 14, color: "#ffffff60" }}>We need <strong style={{ color: C.brand.accent }}>{totalNeeded} volunteers</strong> to make this day amazing. Click a role to sign up.</p>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <BeneficiaryCommitmentNotice eventId={eventId} isCharity={C.cause.isCharity} accent={C.brand.accent} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>

@@ -16,10 +16,10 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2, UserPlus, Shield, LogOut, AlertCircle,
-  CheckCircle2, Copy, Users,
+  CheckCircle2, Copy, Users, Heart, CreditCard,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { admin as adminApi } from "../services/api";
+import { admin as adminApi, commitments as commitmentsApi, billing as billingApi, events as eventsApi } from "../services/api";
 
 const S = {
   input: { width: "100%", padding: "10px 14px", background: "#ffffff08", border: "1px solid #ffffff20", borderRadius: 10, color: "#fff", fontSize: 14, fontFamily: "'Inter',sans-serif", outline: "none" },
@@ -41,6 +41,287 @@ function Notice({ kind, children }) {
   );
 }
 
+function EvidenceFileLink({ file }) {
+  const [loading, setLoading] = useState(false);
+  const openFile = async () => {
+    setLoading(true);
+    try {
+      const url = await commitmentsApi.getEvidenceSignedUrl(file.url);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error("Failed to get evidence file URL:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button onClick={openFile} disabled={loading} style={{ background: "none", border: "none", color: "#60a5fa", fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+      {loading ? "Opening…" : file.filename}
+    </button>
+  );
+}
+
+function EvidenceReviewCard({ commitment, onReviewed }) {
+  const { adminUser } = useAuth();
+  const [reviewing, setReviewing] = useState(false);
+
+  const review = async (status) => {
+    setReviewing(true);
+    try {
+      await commitmentsApi.reviewEvidence(commitment.id, status, adminUser?.id);
+      onReviewed();
+    } catch (err) {
+      console.error("Failed to review evidence:", err);
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{commitment.event?.name || "—"}</p>
+          <p style={{ fontSize: 12, color: "#ffffff50" }}>
+            {commitment.event?.organizations?.name || "—"} → {commitment.beneficiary?.name || "—"}
+          </p>
+        </div>
+        <span style={{ fontSize: 11, color: "#ffffff40" }}>{commitment.evidence_submitted_at ? new Date(commitment.evidence_submitted_at).toLocaleDateString("en-CA") : ""}</span>
+      </div>
+      {commitment.evidence_description && <p style={{ fontSize: 12, color: "#ffffff70", marginTop: 8 }}>{commitment.evidence_description}</p>}
+      {(commitment.evidence_files || []).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+          {commitment.evidence_files.map((f, i) => <EvidenceFileLink key={i} file={f} />)}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={() => review("confirmed")} disabled={reviewing} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#22c55e", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm</button>
+        <button onClick={() => review("disputed")} disabled={reviewing} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Dispute</button>
+      </div>
+    </div>
+  );
+}
+
+const SUB_STATUSES = ["trialing", "active", "past_due", "canceled"];
+const EVENT_BILLING_STATUSES = ["pending", "invoiced", "paid"];
+const STATUS_COLOR = { active: "#22c55e", paid: "#22c55e", trialing: "#f59e0b", pending: "#f59e0b", invoiced: "#f59e0b", past_due: "#ef4444", canceled: "#ffffff50" };
+
+function OrgSubscriptionForm({ orgs, plans, onSaved, onCancel }) {
+  const [orgId, setOrgId] = useState("");
+  const [planId, setPlanId] = useState(plans[0]?.id || "");
+  const [status, setStatus] = useState("trialing");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSave = async () => {
+    if (!orgId || !planId) {
+      setError("Org and plan are both required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await billingApi.createSubscription(orgId, planId, status);
+      onSaved();
+    } catch (err) {
+      console.error("Failed to create subscription:", err);
+      setError(err.message || "Failed to create subscription.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, padding: 14, background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff10" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <select style={{ ...S.input, appearance: "none" }} value={orgId} onChange={e => setOrgId(e.target.value)}>
+          <option value="">Select org…</option>
+          {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+        <select style={{ ...S.input, appearance: "none" }} value={planId} onChange={e => setPlanId(e.target.value)}>
+          {plans.map(p => <option key={p.id} value={p.id}>{p.name} (${p.price})</option>)}
+        </select>
+        <select style={{ ...S.input, appearance: "none" }} value={status} onChange={e => setStatus(e.target.value)}>
+          {SUB_STATUSES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
+        </select>
+      </div>
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={handleSave} disabled={saving} style={S.btn(saving)}>{saving ? "Saving..." : "Create Subscription"}</button>
+        <button onClick={onCancel} style={{ ...S.btn(false), background: "#ffffff10" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function BillingPanel() {
+  const [orgs, setOrgs] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [subs, setSubs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creatingSub, setCreatingSub] = useState(false);
+
+  const [orgEvents, setOrgEvents] = useState({}); // orgId -> events[]
+  const [ebOrgId, setEbOrgId] = useState("");
+  const [ebEventId, setEbEventId] = useState("");
+  const [ebType, setEbType] = useState("per_event");
+  const [ebAmount, setEbAmount] = useState("");
+  const [eventBilling, setEventBilling] = useState([]);
+  const [creatingEb, setCreatingEb] = useState(false);
+  const [ebError, setEbError] = useState(null);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const [o, p, s, eb] = await Promise.all([
+        adminApi.listOrganizations(),
+        billingApi.listPlans(),
+        billingApi.listSubscriptions(),
+        billingApi.listEventBilling(),
+      ]);
+      setOrgs(o);
+      setPlans(p);
+      setSubs(s);
+      setEventBilling(eb);
+    } catch (err) {
+      console.error("Failed to load billing data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const handleSubStatusChange = async (id, status) => {
+    try {
+      await billingApi.updateSubscriptionStatus(id, status);
+      await refresh();
+    } catch (err) {
+      console.error("Failed to update subscription status:", err);
+    }
+  };
+
+  const handleEbOrgChange = async (orgId) => {
+    setEbOrgId(orgId);
+    setEbEventId("");
+    if (orgId && !orgEvents[orgId]) {
+      try {
+        const evs = await eventsApi.getByOrg(orgId);
+        setOrgEvents(prev => ({ ...prev, [orgId]: evs }));
+      } catch (err) {
+        console.error("Failed to load org events:", err);
+      }
+    }
+  };
+
+  const handleCreateEventBilling = async () => {
+    if (!ebEventId || !ebOrgId) {
+      setEbError("Org and event are both required.");
+      return;
+    }
+    setEbError(null);
+    try {
+      await billingApi.createEventBilling(ebEventId, ebOrgId, ebType, ebAmount ? parseFloat(ebAmount) : null);
+      setCreatingEb(false);
+      setEbOrgId(""); setEbEventId(""); setEbAmount("");
+      await refresh();
+    } catch (err) {
+      console.error("Failed to create event billing:", err);
+      setEbError(err.message || "Failed to create event billing row.");
+    }
+  };
+
+  const handleEbStatusChange = async (id, status) => {
+    try {
+      await billingApi.updateEventBillingStatus(id, status);
+      await refresh();
+    } catch (err) {
+      console.error("Failed to update event billing status:", err);
+    }
+  };
+
+  return (
+    <>
+      {/* Org subscriptions */}
+      <div style={S.card}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={S.h2}><CreditCard size={18} color="#D4A843" /> Org Subscriptions {!loading && <span style={{ fontSize: 12, color: "#ffffff40", fontWeight: 600 }}>({subs.length})</span>}</h2>
+          {!creatingSub && plans.length > 0 && <button onClick={() => setCreatingSub(true)} style={{ ...S.btn(false), padding: "7px 14px", fontSize: 12 }}>+ New Subscription</button>}
+        </div>
+        <p style={S.sub}>Manually-set status — no real Stripe billing for Cocomo's own subscription revenue exists yet.</p>
+
+        {loading && <p style={{ fontSize: 13, color: "#ffffff50" }}>Loading…</p>}
+        {!loading && subs.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40" }}>No subscriptions yet.</p>}
+        <div style={{ display: "grid", gap: 8 }}>
+          {subs.map(s => (
+            <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+              <div>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{s.organizations?.name || "—"}</p>
+                <p style={{ fontSize: 12, color: "#ffffff50" }}>{s.billing_plans?.name || "—"} · ${s.billing_plans?.price}</p>
+              </div>
+              <select value={s.status} onChange={e => handleSubStatusChange(s.id, e.target.value)} style={{ ...S.input, width: "auto", padding: "6px 10px", fontSize: 12, color: STATUS_COLOR[s.status] || "#fff" }}>
+                {SUB_STATUSES.map(st => <option key={st} value={st}>{st.replace("_", " ")}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        {creatingSub && <OrgSubscriptionForm orgs={orgs} plans={plans} onCancel={() => setCreatingSub(false)} onSaved={() => { setCreatingSub(false); refresh(); }} />}
+      </div>
+
+      {/* Event billing */}
+      <div style={S.card}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={S.h2}><CreditCard size={18} color="#D4A843" /> Event Billing {!loading && <span style={{ fontSize: 12, color: "#ffffff40", fontWeight: 600 }}>({eventBilling.length})</span>}</h2>
+          {!creatingEb && <button onClick={() => setCreatingEb(true)} style={{ ...S.btn(false), padding: "7px 14px", fontSize: 12 }}>+ New Event Billing</button>}
+        </div>
+        <p style={S.sub}>Per-event charges or subscription-covered events — status is set manually here.</p>
+
+        {loading && <p style={{ fontSize: 13, color: "#ffffff50" }}>Loading…</p>}
+        {!loading && eventBilling.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40" }}>No event billing rows yet.</p>}
+        <div style={{ display: "grid", gap: 8 }}>
+          {eventBilling.map(eb => (
+            <div key={eb.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+              <div>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{eb.events?.name || "—"}</p>
+                <p style={{ fontSize: 12, color: "#ffffff50" }}>{eb.organizations?.name || "—"} · {eb.billing_type.replace("_", " ")}{eb.amount ? ` · $${eb.amount}` : ""}</p>
+              </div>
+              <select value={eb.status} onChange={e => handleEbStatusChange(eb.id, e.target.value)} style={{ ...S.input, width: "auto", padding: "6px 10px", fontSize: 12, color: STATUS_COLOR[eb.status] || "#fff" }}>
+                {EVENT_BILLING_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        {creatingEb && (
+          <div style={{ marginTop: 12, padding: 14, background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff10" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <select style={{ ...S.input, appearance: "none" }} value={ebOrgId} onChange={e => handleEbOrgChange(e.target.value)}>
+                <option value="">Select org…</option>
+                {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+              <select style={{ ...S.input, appearance: "none" }} value={ebEventId} onChange={e => setEbEventId(e.target.value)} disabled={!ebOrgId}>
+                <option value="">Select event…</option>
+                {(orgEvents[ebOrgId] || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+              <select style={{ ...S.input, appearance: "none" }} value={ebType} onChange={e => setEbType(e.target.value)}>
+                <option value="per_event">Per event</option>
+                <option value="covered_by_subscription">Covered by subscription</option>
+              </select>
+              <input style={S.input} type="number" value={ebAmount} onChange={e => setEbAmount(e.target.value)} placeholder="Amount (optional)" />
+            </div>
+            {ebError && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{ebError}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={handleCreateEventBilling} style={S.btn(false)}>Create</button>
+              <button onClick={() => setCreatingEb(false)} style={{ ...S.btn(false), background: "#ffffff10" }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function SuperAdminDashboard() {
   const { adminUser, signOut } = useAuth();
   const navigate = useNavigate();
@@ -49,6 +330,22 @@ export default function SuperAdminDashboard() {
   const [admins, setAdmins] = useState([]);
   const [loadingLists, setLoadingLists] = useState(true);
   const [listError, setListError] = useState(null);
+
+  const [pendingReview, setPendingReview] = useState([]);
+  const [loadingReview, setLoadingReview] = useState(true);
+
+  const refreshReview = async () => {
+    setLoadingReview(true);
+    try {
+      setPendingReview(await commitmentsApi.listSubmittedForReview());
+    } catch (err) {
+      console.error("Failed to load evidence review queue:", err);
+    } finally {
+      setLoadingReview(false);
+    }
+  };
+
+  useEffect(() => { refreshReview(); }, []);
 
   // Create org form
   const [orgName, setOrgName] = useState("");
@@ -213,6 +510,22 @@ export default function SuperAdminDashboard() {
                 )}
               </Notice>
             )}
+          </div>
+        </div>
+
+        {/* Billing (Phase 7 — manual status, no real Stripe integration) */}
+        <BillingPanel />
+
+        {/* Beneficiary fulfillment evidence review */}
+        <div style={S.card}>
+          <h2 style={S.h2}><Heart size={18} color="#D4A843" /> Beneficiary Evidence Review {!loadingReview && <span style={{ fontSize: 12, color: "#ffffff40", fontWeight: 600 }}>({pendingReview.length})</span>}</h2>
+          <p style={S.sub}>Fulfillment evidence submitted by orgs, awaiting confirm/dispute. Private — not shown anywhere public.</p>
+          {loadingReview && <p style={{ fontSize: 13, color: "#ffffff50" }}>Loading…</p>}
+          {!loadingReview && pendingReview.length === 0 && <p style={{ fontSize: 13, color: "#ffffff40" }}>Nothing awaiting review.</p>}
+          <div style={{ display: "grid", gap: 8 }}>
+            {pendingReview.map(c => (
+              <EvidenceReviewCard key={c.id} commitment={c} onReviewed={refreshReview} />
+            ))}
           </div>
         </div>
 

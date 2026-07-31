@@ -17,9 +17,10 @@ import { useNavigate } from "react-router-dom";
 import QRCode from "qrcode";
 import { useEvent } from "../context/EventContext";
 import { useAuth } from "../context/AuthContext";
-import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi } from "../services/api";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi, beneficiaries as beneficiariesApi, commitments as commitmentsApi, expenses as expensesApi, fanDonations as fanDonationsApi, billing as billingApi } from "../services/api";
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 import { useScreenLock } from "../hooks/useScreenLock";
+import { verifyBeneficiaryRegistration } from "../utils/verifyBeneficiaryRegistration";
 
 /* ═══════════════════════════════════════════════════════════
    STYLES
@@ -545,9 +546,429 @@ function VolunteersPanel() {
 /* ═══════════════════════════════════════════════════════════
    BUILD — FUNDRAISING (with submit)
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   BUILD — BENEFICIARIES (org-scoped, org_admin/super_admin only)
+   ═══════════════════════════════════════════════════════════ */
+function BeneficiaryForm({ orgId, initial, onSaved, onCancel, B }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [registrationNumber, setRegistrationNumber] = useState(initial?.registration_number || "");
+  const [website, setWebsite] = useState(initial?.website || "");
+  const [contactName, setContactName] = useState(initial?.contact_name || "");
+  const [contactEmail, setContactEmail] = useState(initial?.contact_email || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      setError("Beneficiary name is required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const verified = verifyBeneficiaryRegistration(registrationNumber);
+      const payload = {
+        name: name.trim(),
+        registration_number: registrationNumber.trim() || null,
+        website: website.trim() || null,
+        contact_name: contactName.trim() || null,
+        contact_email: contactEmail.trim() || null,
+        verified,
+        verified_at: verified ? new Date().toISOString() : null,
+      };
+      if (initial?.id) {
+        await beneficiariesApi.update(initial.id, payload);
+      } else {
+        await beneficiariesApi.create(orgId, payload);
+      }
+      onSaved();
+    } catch (err) {
+      console.error("Failed to save beneficiary:", err);
+      setError(err.message || "Failed to save beneficiary.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>NAME</label>
+          <input style={S.input} value={name} onChange={e => setName(e.target.value)} placeholder="Local Food Bank" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>CRA REGISTRATION NUMBER</label>
+          <input style={S.input} value={registrationNumber} onChange={e => setRegistrationNumber(e.target.value)} placeholder="123456789RR0001" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>WEBSITE</label>
+          <input style={S.input} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://…" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>CONTACT NAME</label>
+          <input style={S.input} value={contactName} onChange={e => setContactName(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>CONTACT EMAIL</label>
+          <input style={S.input} type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} />
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 10 }}>
+        Verification is a format check only (9 digits + "RR" + 4 digits) — not a real charity registry lookup.
+      </p>
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save Beneficiary"}</button>
+        <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function BeneficiariesPanel({ orgId, B }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [editing, setEditing] = useState(null); // beneficiary row, or {} for new, or null for closed
+
+  const refresh = async () => {
+    if (!orgId) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setList(await beneficiariesApi.listByOrg(orgId));
+    } catch (err) {
+      console.error("Failed to load beneficiaries:", err);
+      setLoadError("Failed to load beneficiaries.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, [orgId]);
+
+  return (
+    <div style={{ ...S.card, marginTop: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Heart size={16} color={B.accent} /> Beneficiaries</h3>
+        {!editing && <button onClick={() => setEditing({})} style={S.btnSm(B.accent, B.dark)}>+ Add Beneficiary</button>}
+      </div>
+      <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>Charities this organization can commit an event's proceeds to. Managed at the org level — reusable across events.</p>
+
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50", marginTop: 12 }}>Loading…</p>}
+      {loadError && <p style={{ fontSize: 13, color: "#ef4444", marginTop: 12 }}>{loadError}</p>}
+      {!loading && !loadError && list.length === 0 && !editing && <p style={{ fontSize: 13, color: "#ffffff40", marginTop: 12 }}>No beneficiaries yet.</p>}
+
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {list.map(ben => (
+          <div key={ben.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{ben.name}</p>
+              <p style={{ fontSize: 12, color: "#ffffff50" }}>{ben.registration_number || "No registration number on file"}</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={S.badge(ben.verified ? "#22c55e" : "#ef4444")}>{ben.verified ? "Verified" : "Unverified"}</span>
+              <button onClick={() => setEditing(ben)} style={S.btnSm("#ffffff10", "#ffffffaa")}>Edit</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {editing && (
+        <BeneficiaryForm
+          orgId={orgId}
+          initial={editing.id ? editing : null}
+          B={B}
+          onCancel={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUILD — BENEFICIARY COMMITMENT (event-scoped, charity events only)
+   ═══════════════════════════════════════════════════════════ */
+function CommitmentForm({ eventId, orgId, adminUserId, onSaved, onCancel, B }) {
+  const [orgBeneficiaries, setOrgBeneficiaries] = useState([]);
+  const [beneficiaryId, setBeneficiaryId] = useState("");
+  const [commitmentText, setCommitmentText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    beneficiariesApi.listByOrg(orgId).then(setOrgBeneficiaries).catch(err => console.error("Failed to load beneficiaries:", err));
+  }, [orgId]);
+
+  const handleSave = async (publish) => {
+    if (!beneficiaryId) {
+      setError("Select a beneficiary first.");
+      return;
+    }
+    if (!commitmentText.trim()) {
+      setError("Commitment text is required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await commitmentsApi.create(eventId, {
+        beneficiary_id: beneficiaryId,
+        commitment_text: commitmentText.trim(),
+        signed_by: adminUserId,
+        signed_at: new Date().toISOString(),
+        status: publish ? "published" : "draft",
+      });
+      onSaved();
+    } catch (err) {
+      console.error("Failed to save commitment:", err);
+      setError(err.message || "Failed to save commitment.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, marginTop: 12 }}>
+      <div>
+        <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>BENEFICIARY</label>
+        <select style={{ ...S.input, appearance: "none" }} value={beneficiaryId} onChange={e => setBeneficiaryId(e.target.value)}>
+          <option value="">Select a beneficiary…</option>
+          {orgBeneficiaries.map(b => <option key={b.id} value={b.id}>{b.name}{b.verified ? "" : " (unverified)"}</option>)}
+        </select>
+        {orgBeneficiaries.length === 0 && <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 4 }}>No beneficiaries on file for this org yet — add one under Fundraising first.</p>}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>COMMITMENT TEXT</label>
+        <textarea value={commitmentText} onChange={e => setCommitmentText(e.target.value)} rows={5} style={{ ...S.input, resize: "vertical", lineHeight: 1.6 }} placeholder="e.g. 100% of net proceeds from this event will be donated to…" />
+      </div>
+      <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 10 }}>
+        Signing records you ({adminUserId ? "current admin" : "—"}) as the signer with today's date. Publishing makes the commitment visible on the public event page and registration flows, and is required before the event itself can be published.
+      </p>
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={() => handleSave(true)} disabled={saving} style={S.btn("#22c55e", "#fff")}>{saving ? "Saving..." : "Sign & Publish"}</button>
+        <button onClick={() => handleSave(false)} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save as Draft"}</button>
+        <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   POST-EVENT FULFILLMENT EVIDENCE — org-side submission
+   ═══════════════════════════════════════════════════════════ */
+const FULFILLMENT_LABEL = {
+  pending: { label: "Pending", color: "#ffffff60" },
+  submitted: { label: "Under Review", color: "#f59e0b" },
+  confirmed: { label: "Confirmed", color: "#22c55e" },
+  disputed: { label: "Disputed", color: "#ef4444" },
+};
+
+function EvidenceFileLink({ file }) {
+  const [signedUrl, setSignedUrl] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const openFile = async () => {
+    if (signedUrl) { window.open(signedUrl, "_blank"); return; }
+    setLoading(true);
+    try {
+      const url = await commitmentsApi.getEvidenceSignedUrl(file.url);
+      setSignedUrl(url);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error("Failed to get evidence file URL:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button onClick={openFile} disabled={loading} style={{ background: "none", border: "none", color: "#60a5fa", fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+      {loading ? "Opening…" : file.filename}
+    </button>
+  );
+}
+
+function FulfillmentEvidenceForm({ commitment, onSaved, onCancel, B }) {
+  const [files, setFiles] = useState([]);
+  const [description, setDescription] = useState(commitment.evidence_description || "");
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleFilePick = async (e) => {
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const uploaded = [];
+      for (const file of picked) {
+        uploaded.push(await commitmentsApi.uploadEvidenceFile(commitment.event_id, file));
+      }
+      setFiles(prev => [...prev, ...uploaded]);
+    } catch (err) {
+      console.error("Evidence upload failed:", err);
+      setError(err.message || "File upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await commitmentsApi.submitEvidence(commitment.id, {
+        evidenceFiles: [...(commitment.evidence_files || []), ...files],
+        evidenceDescription: description.trim(),
+      });
+      onSaved();
+    } catch (err) {
+      console.error("Failed to submit evidence:", err);
+      setError(err.message || "Failed to submit evidence.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 10, padding: 12, background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff10" }}>
+      <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>DESCRIPTION</label>
+      <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} style={{ ...S.input, resize: "vertical" }} placeholder="How and when the funds were delivered…" />
+
+      <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", margin: "10px 0 4px" }}>EVIDENCE FILES</label>
+      <input type="file" multiple onChange={handleFilePick} disabled={uploading} style={{ fontSize: 12, color: "#ffffffaa" }} />
+      {files.length > 0 && (
+        <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+          {files.map((f, i) => <li key={i} style={{ fontSize: 12, color: "#ffffff70" }}>{f.filename}</li>)}
+        </ul>
+      )}
+
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={handleSubmit} disabled={saving || uploading} style={S.btnSm(B.accent, B.dark)}>{saving ? "Submitting..." : "Submit Evidence"}</button>
+        <button onClick={onCancel} style={S.btnSm("#ffffff10", "#ffffffaa")}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function FulfillmentSection({ commitment, onUpdated, B }) {
+  const [submitting, setSubmitting] = useState(false);
+  const fulfillment = FULFILLMENT_LABEL[commitment.fulfillment_status] || FULFILLMENT_LABEL.pending;
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #ffffff08" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", textTransform: "uppercase", letterSpacing: 0.5 }}>Fulfillment</p>
+        <span style={S.badge(fulfillment.color)}>{fulfillment.label}</span>
+      </div>
+      {commitment.evidence_description && commitment.fulfillment_status !== "pending" && (
+        <p style={{ fontSize: 12, color: "#ffffff70", marginTop: 6 }}>{commitment.evidence_description}</p>
+      )}
+      {(commitment.evidence_files || []).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 6 }}>
+          {commitment.evidence_files.map((f, i) => <EvidenceFileLink key={i} file={f} />)}
+        </div>
+      )}
+      {(commitment.fulfillment_status === "pending" || commitment.fulfillment_status === "disputed") && (
+        submitting
+          ? <FulfillmentEvidenceForm commitment={commitment} B={B} onCancel={() => setSubmitting(false)} onSaved={() => { setSubmitting(false); onUpdated(); }} />
+          : <button onClick={() => setSubmitting(true)} style={{ ...S.btnSm(B.accent, B.dark), marginTop: 8 }}>Submit Evidence</button>
+      )}
+    </div>
+  );
+}
+
+function BeneficiaryCommitmentPanel({ eventId, orgId, B }) {
+  const { adminUser } = useAuth();
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = async () => {
+    if (!eventId) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setList(await commitmentsApi.listByEvent(eventId));
+    } catch (err) {
+      console.error("Failed to load commitments:", err);
+      setLoadError("Failed to load beneficiary commitments.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, [eventId]);
+
+  const publish = async (id) => {
+    try {
+      await commitmentsApi.update(id, { status: "published" });
+      await refresh();
+    } catch (err) {
+      console.error("Failed to publish commitment:", err);
+    }
+  };
+
+  const hasPublished = list.some(c => c.status === "published");
+
+  return (
+    <div style={{ ...S.card, marginTop: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Heart size={16} color={B.accent} /> Beneficiary Commitment</h3>
+        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ New Commitment</button>}
+      </div>
+      <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>
+        This event is flagged as a charity event — a published commitment is required before the event can be published.
+      </p>
+
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50", marginTop: 12 }}>Loading…</p>}
+      {loadError && <p style={{ fontSize: 13, color: "#ef4444", marginTop: 12 }}>{loadError}</p>}
+      {!loading && !loadError && !hasPublished && <p style={{ fontSize: 12, color: "#f59e0b", marginTop: 12 }}>No published commitment yet — the event cannot be published until one exists.</p>}
+
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {list.map(c => (
+          <div key={c.id} style={{ padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{c.beneficiary?.name || "—"}</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={S.badge(c.status === "published" ? "#22c55e" : "#ffffff60")}>{c.status}</span>
+                {c.status === "draft" && <button onClick={() => publish(c.id)} style={S.btnSm("#22c55e", "#fff")}>Publish</button>}
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: "#ffffff70", marginTop: 6, whiteSpace: "pre-wrap" }}>{c.commitment_text}</p>
+            {c.status === "published" && <FulfillmentSection commitment={c} B={B} onUpdated={refresh} />}
+          </div>
+        ))}
+      </div>
+
+      {creating && (
+        <CommitmentForm
+          eventId={eventId}
+          orgId={orgId}
+          adminUserId={adminUser?.id}
+          B={B}
+          onCancel={() => setCreating(false)}
+          onSaved={() => { setCreating(false); refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
 function FundraisingPanel() {
   const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
   const B = config.brand;
+  const orgId = config?._raw?.org_id;
+  const canManageBeneficiaries = adminUser?.role === "org_admin" || adminUser?.role === "super_admin";
 
   const goal = config.fundraising.goal || 15000;
   const [saved, setSaved] = useState(config.fundraising.current || 0);
@@ -604,6 +1025,270 @@ function FundraisingPanel() {
         </div>
       </div>
       <SubmitBar count={changed ? 1 : 0} onSubmit={handleSubmit} onDiscard={() => setCurrent(saved)} submitting={submitting} error={submitError} />
+      {/* Gated to org_admin/super_admin, same as BeneficiariesPanel below: migration
+          021's RLS only grants beneficiaries SELECT to is_org_admin_for(org_id), so
+          an event-scoped 'admin' can't read the org's beneficiary list to pick one
+          here even if this panel were shown to them. */}
+      {config.cause.isCharity && canManageBeneficiaries && <BeneficiaryCommitmentPanel eventId={eventId} orgId={orgId} B={B} />}
+      {canManageBeneficiaries && <BeneficiariesPanel orgId={orgId} B={B} />}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUILD — LEDGER (bookkeeping only — expenses CRUD + manual fan
+   donation entry. No Stripe Connect, no fan-facing collection flow.)
+   ═══════════════════════════════════════════════════════════ */
+const EXPENSE_CATEGORIES = ["Venue", "Equipment", "Food & Beverage", "Prizes", "Printing", "Permits", "Other"];
+const DONATION_METHODS = ["e_transfer", "cash", "stripe", "manual"];
+
+function ExpenseForm({ eventId, adminUserId, onSaved, onCancel, B }) {
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paidTo, setPaidTo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSave = async () => {
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) {
+      setError("Enter a valid amount.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await expensesApi.create(eventId, {
+        category, description: description.trim() || null, amount: amt,
+        paid_to: paidTo.trim() || null, paid_by: adminUserId,
+      });
+      onSaved();
+    } catch (err) {
+      console.error("Failed to save expense:", err);
+      setError(err.message || "Failed to save expense.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>CATEGORY</label>
+          <select style={{ ...S.input, appearance: "none" }} value={category} onChange={e => setCategory(e.target.value)}>
+            {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>AMOUNT</label>
+          <input type="number" style={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>PAID TO</label>
+          <input style={S.input} value={paidTo} onChange={e => setPaidTo(e.target.value)} placeholder="Vendor / person" />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>DESCRIPTION</label>
+          <input style={S.input} value={description} onChange={e => setDescription(e.target.value)} placeholder="What was this for?" />
+        </div>
+      </div>
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save Expense"}</button>
+        <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function ExpensesSection({ eventId, adminUserId, B }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      setList(await expensesApi.list(eventId));
+    } catch (err) {
+      console.error("Failed to load expenses:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, [eventId]);
+
+  const remove = async (id) => {
+    try {
+      await expensesApi.remove(id);
+      await refresh();
+    } catch (err) {
+      console.error("Failed to delete expense:", err);
+    }
+  };
+
+  const total = list.reduce((s, e) => s + (e.amount || 0), 0);
+
+  return (
+    <div style={S.card}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={16} color={B.accent} /> Expenses</h3>
+        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Add Expense</button>}
+      </div>
+      {!loading && <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>{list.length} expense{list.length !== 1 ? "s" : ""} · ${total.toLocaleString(undefined, { minimumFractionDigits: 2 })} total</p>}
+
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50", marginTop: 12 }}>Loading…</p>}
+      {!loading && list.length === 0 && !creating && <p style={{ fontSize: 13, color: "#ffffff40", marginTop: 12 }}>No expenses recorded yet.</p>}
+
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {list.map(e => (
+          <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{e.description || e.category}</p>
+              <p style={{ fontSize: 12, color: "#ffffff50" }}>{e.category}{e.paid_to ? ` · ${e.paid_to}` : ""}</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#ef4444" }}>-${e.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <button onClick={() => remove(e.id)} style={S.btnSm("#ffffff10", "#ffffffaa")}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {creating && (
+        <ExpenseForm eventId={eventId} adminUserId={adminUserId} B={B} onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
+      )}
+    </div>
+  );
+}
+
+function FanDonationForm({ eventId, onSaved, onCancel, B }) {
+  const [donorName, setDonorName] = useState("");
+  const [donorEmail, setDonorEmail] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState(DONATION_METHODS[0]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSave = async () => {
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) {
+      setError("Enter a valid amount.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await fanDonationsApi.create(eventId, {
+        donor_name: donorName.trim() || null,
+        donor_email: donorEmail.trim() || null,
+        amount: amt,
+        payment_method: paymentMethod,
+        payment_status: "paid",
+      });
+      onSaved();
+    } catch (err) {
+      console.error("Failed to save donation:", err);
+      setError(err.message || "Failed to save donation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, marginTop: 12 }}>
+      <p style={{ fontSize: 12, color: "#ffffff40", marginBottom: 10 }}>Manual entry — for donations collected outside this platform (cash, e-transfer, etc). Not a payment flow.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>DONOR NAME</label>
+          <input style={S.input} value={donorName} onChange={e => setDonorName(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>DONOR EMAIL</label>
+          <input style={S.input} type="email" value={donorEmail} onChange={e => setDonorEmail(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>AMOUNT</label>
+          <input type="number" style={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#ffffff50", display: "block", marginBottom: 4 }}>METHOD</label>
+          <select style={{ ...S.input, appearance: "none" }} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+            {DONATION_METHODS.map(m => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
+          </select>
+        </div>
+      </div>
+      {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save Donation"}</button>
+        <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function FanDonationsSection({ eventId, B }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      setList(await fanDonationsApi.list(eventId));
+    } catch (err) {
+      console.error("Failed to load fan donations:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, [eventId]);
+
+  const total = list.reduce((s, d) => s + (d.amount || 0), 0);
+
+  return (
+    <div style={{ ...S.card, marginTop: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Heart size={16} color={B.accent} /> Fan Donations</h3>
+        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Record Donation</button>}
+      </div>
+      {!loading && <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>{list.length} donation{list.length !== 1 ? "s" : ""} · ${total.toLocaleString(undefined, { minimumFractionDigits: 2 })} total</p>}
+
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50", marginTop: 12 }}>Loading…</p>}
+      {!loading && list.length === 0 && !creating && <p style={{ fontSize: 13, color: "#ffffff40", marginTop: 12 }}>No fan donations recorded yet.</p>}
+
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {list.map(d => (
+          <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{d.donor_name || "Anonymous"}</p>
+              <p style={{ fontSize: 12, color: "#ffffff50" }}>{d.payment_method.replace("_", " ")}{d.team?.name ? ` · for ${d.team.name}` : ""}</p>
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>+${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+          </div>
+        ))}
+      </div>
+
+      {creating && (
+        <FanDonationForm eventId={eventId} B={B} onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
+      )}
+    </div>
+  );
+}
+
+function LedgerPanel() {
+  const { config, eventId } = useEvent();
+  const { adminUser } = useAuth();
+  const B = config.brand;
+
+  return (
+    <div>
+      <ExpensesSection eventId={eventId} adminUserId={adminUser?.id} B={B} />
+      <FanDonationsSection eventId={eventId} B={B} />
     </div>
   );
 }
@@ -668,7 +1353,7 @@ function RulesPanel() {
 // elsewhere — the stat cards above, and the public event page — so there
 // was no case for "show it, just disable the button" to fit).
 const BUILD_SUBTAB_VISIBILITY = {
-  treasurer: ["registrations"],
+  treasurer: ["registrations", "ledger"],
   volunteer_coord: ["volunteers"],
 };
 
@@ -680,6 +1365,7 @@ function BuildContext() {
     { id: "registrations", label: "Registrations", icon: Users },
     { id: "volunteers", label: "Volunteers", icon: HandHelping },
     { id: "fundraising", label: "Fundraising", icon: Heart },
+    { id: "ledger", label: "Ledger", icon: Banknote },
     { id: "rules", label: "Rules", icon: BookOpen },
   ];
   const visibleSubtabIds = BUILD_SUBTAB_VISIBILITY[adminUser?.role] || allTabs.map(t => t.id);
@@ -741,6 +1427,7 @@ function BuildContext() {
       {tab === "registrations" && <RegistrationsPanel />}
       {tab === "volunteers" && <VolunteersPanel />}
       {tab === "fundraising" && <FundraisingPanel />}
+      {tab === "ledger" && <LedgerPanel />}
       {tab === "rules" && <RulesPanel />}
     </div>
   );
@@ -762,6 +1449,13 @@ function EventStatusCard() {
     setPublishing(true);
     setPublishError(null);
     try {
+      if (config.cause.isCharity) {
+        const published = await commitmentsApi.getPublished(eventId);
+        if (!published) {
+          setPublishError("This is a charity event — ask your org admin to add and publish a beneficiary commitment before this event can go live.");
+          return;
+        }
+      }
       await eventsApi.updateStatus(eventId, "registration_open");
       await refetch();
     } catch (err) {
@@ -1563,6 +2257,79 @@ const EVENT_ROLES = [
   { id: "control_desk", label: "Control Desk — court/bracket control" },
 ];
 
+/* ═══════════════════════════════════════════════════════════
+   BILLING SUMMARY — read-only. org_admin/super_admin only (migration
+   026 RLS); writes still happen exclusively in SuperAdminDashboard.
+   Org-scoped, not event-scoped — this is the one place in AdminDashboard
+   that's already org-level rather than per-event (org-wide invites live
+   here too), so it's the natural home rather than bolting billing onto
+   a single event's tab.
+   ═══════════════════════════════════════════════════════════ */
+function BillingSummaryCard({ orgId, B }) {
+  const [subscription, setSubscription] = useState(null);
+  const [eventBilling, setEventBilling] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([
+      billingApi.getSubscriptionForOrg(orgId),
+      billingApi.listEventBillingForOrg(orgId),
+    ]).then(([sub, eb]) => {
+      setSubscription(sub);
+      setEventBilling(eb);
+    }).catch(err => {
+      console.error("Failed to load billing summary:", err);
+      setLoadError("Failed to load billing.");
+    }).finally(() => setLoading(false));
+  }, [orgId]);
+
+  return (
+    <div style={S.card}>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Card size={16} color={B.accent} /> Billing</h3>
+      <p style={{ fontSize: 12, color: "#ffffff50", marginBottom: 16 }}>Read-only — contact Cocomo to change your plan or billing status.</p>
+
+      {loading && <p style={{ fontSize: 13, color: "#ffffff50" }}>Loading…</p>}
+      {loadError && <p style={{ fontSize: 13, color: "#ef4444" }}>{loadError}</p>}
+
+      {!loading && !loadError && (
+        <>
+          <div style={{ padding: "12px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08", marginBottom: 12 }}>
+            {subscription ? (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{subscription.billing_plans?.name || "—"}</p>
+                  <p style={{ fontSize: 12, color: "#ffffff50" }}>${subscription.billing_plans?.price} · {subscription.billing_plans?.type}</p>
+                </div>
+                <span style={S.badge(subscription.status === "active" ? "#22c55e" : subscription.status === "past_due" ? "#ef4444" : "#f59e0b")}>{subscription.status.replace("_", " ")}</span>
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: "#ffffff40" }}>No subscription on file.</p>
+            )}
+          </div>
+
+          {eventBilling.length > 0 && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {eventBilling.map(eb => (
+                <div key={eb.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#ffffff04", borderRadius: 10, border: "1px solid #ffffff08" }}>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{eb.events?.name || "—"}</p>
+                    <p style={{ fontSize: 11, color: "#ffffff50" }}>{eb.billing_type.replace("_", " ")}{eb.amount ? ` · $${eb.amount}` : ""}</p>
+                  </div>
+                  <span style={S.badge(eb.status === "paid" ? "#22c55e" : "#f59e0b")}>{eb.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function TeamContext() {
   const { config, eventId } = useEvent();
   const { adminUser } = useAuth();
@@ -1681,6 +2448,8 @@ function TeamContext() {
           ))}
         </div>
       </div>
+
+      <BillingSummaryCard orgId={orgId} B={B} />
     </div>
   );
 }
@@ -1701,8 +2470,54 @@ const ROLE_TABS = {
 /* ═══════════════════════════════════════════════════════════
    MAIN APP
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   FULFILLMENT ACTION BANNER — persistent, in-app only (no email/
+   notification infra exists in this project). Fires when the event has
+   completed, is a charity event, and its published commitment is still
+   waiting on fulfillment evidence.
+   ═══════════════════════════════════════════════════════════ */
+function FulfillmentActionBanner({ config, eventId, onGoToFundraising }) {
+  const { adminUser } = useAuth();
+  const [published, setPublished] = useState(null);
+  const canAct = adminUser?.role === "org_admin" || adminUser?.role === "super_admin";
+
+  useEffect(() => {
+    if (!eventId || !config.cause.isCharity || config.event.status !== "completed") {
+      setPublished(null);
+      return;
+    }
+    commitmentsApi.getPublished(eventId).then(setPublished).catch(() => setPublished(null));
+  }, [eventId, config.cause.isCharity, config.event.status]);
+
+  if (!published || published.fulfillment_status !== "pending") return null;
+
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12,
+      background: "#f59e0b15", border: "1px solid #f59e0b40", borderRadius: 12, padding: "14px 18px", marginBottom: 20,
+    }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <AlertCircle size={18} color="#f59e0b" style={{ flexShrink: 0, marginTop: 1 }} />
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Action needed: beneficiary fulfillment evidence</p>
+          <p style={{ fontSize: 12, color: "#ffffff70", marginTop: 2 }}>
+            {canAct
+              ? `This event is complete — submit evidence that ${published.beneficiary?.name || "the beneficiary"} received the committed proceeds.`
+              : `This event needs its beneficiary fulfillment evidence submitted — ask your org admin.`}
+          </p>
+        </div>
+      </div>
+      {canAct && (
+        <button onClick={onGoToFundraising} style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: "#f59e0b", color: "#0a0a0a", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+          Go to Fundraising
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
-  const { config } = useEvent();
+  const { config, eventId } = useEvent();
   const { adminUser, signOut } = useAuth();
   const navigate = useNavigate();
   const B = config.brand;
@@ -1776,6 +2591,7 @@ export default function AdminDashboard() {
       </header>
 
       <main style={{ maxWidth: 1200, margin: "0 auto", padding: 24 }}>
+        <FulfillmentActionBanner config={config} eventId={eventId} onGoToFundraising={() => setCtx("build")} />
         {ctx === "build" && <BuildContext />}
         {ctx === "publish" && <PublishContext />}
         {ctx === "gameday" && <GameDayContext />}
