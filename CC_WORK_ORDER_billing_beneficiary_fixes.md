@@ -2,20 +2,35 @@
 
 Reference: `billing_beneficiary_e2e_checklist.md` (session updates 2026-07-31, both passes). Same discipline as every other work order in this project: **phased, stop and report after each phase, no self-verification, no `PROJECT_STATUS.md` edits.** CC has no service-role/SQL-editor access — migrations are written, not applied.
 
-Ordered so the two investigation phases that block further live testing go first. Everything else can happen in any order after that, but do them one phase at a time regardless.
+Ordered so the phase that's already fully diagnosed (Phase 1) and the highest-impact confirmed bug (Phase 2) go first. Everything else can happen in any order after that, but do them one phase at a time regardless.
 
 ---
 
-## Phase 1 — Diagnose the second-event RLS block
+## Phase 1 — Apply the fix for the "second event" RLS bug (root cause already confirmed)
 
-**Do not assume this is a bug yet — diagnose first.**
+**Not a diagnosis phase anymore — root cause fully confirmed live, 2026-07-31/08-01, via direct SQL Editor investigation (session-faked RLS testing + Postgres logs).**
 
-1. Find the org_admin account used in testing. Query their `admin_users` row directly — what does `org_id` actually contain?
-2. Compare against the `org_id` the `TournamentWizard.jsx` create call is actually submitting for the second event (add a temporary `console.log` of the payload right before the `createTournament` call if needed).
-3. Confirm whether they match.
-   - **If they don't match:** this is a session/wizard-state bug (wrong org being submitted), not an RLS bug — report which one it is and where the mismatch originates (stale session? wizard defaulting to the first org in a list? hardcoded somewhere?).
-   - **If they do match:** the RLS policy itself is rejecting a legitimate same-org insert — re-read `010_rls_org_event_scoping.sql`'s `events` INSERT policy (`is_super_admin() OR is_org_admin_for(org_id)`) and `is_org_admin_for()`'s actual definition for anything that could reject a second row for the same org (e.g. an accidental uniqueness assumption baked into the helper function, not just the policy).
-4. Report findings only — do not fix yet, this phase is diagnosis.
+Root cause: `events` has no `SELECT` policy covering an org_admin reading their own org's **draft** events. The two existing SELECT policies only cover non-draft/public events, or event-scoped roles for a specific event. Supabase's JS client always appends `RETURNING` to `.insert()` calls, and Postgres checks `RETURNING` visibility against `SELECT` policies — so **any** org_admin creating **any** new event (always starts `status='draft'`) hits this, confirmed not specific to a second event or this org. Confirmed by: identical insert with `RETURNING` removed succeeds cleanly (fails only on an unrelated missing-column NOT NULL, then succeeds fully once that's added); with `RETURNING` present it fails identically to the original bug report, in the same simulated session (`SET LOCAL ROLE authenticated` + `SET LOCAL request.jwt.claims`).
+
+A draft migration already exists: `028_fix_org_admin_events_select.sql` (attached separately). It adds:
+
+```sql
+create policy "Org admin read own events"
+  on events
+  for select
+  to public
+  using (
+    is_super_admin()
+    or is_org_admin_for(org_id)
+    or is_event_admin_for(id)
+  );
+```
+
+1. Review the draft migration — confirm the policy logic is correct and doesn't duplicate/conflict with the existing three SELECT policies on `events` (`"Public read events"`, `"Event roles read events"`).
+2. Apply it live (same manual-apply process as every other migration in this project — CC has no service-role/SQL-editor access, migration is written not applied by CC).
+3. Once applied, the project owner will live-verify: create a second event under an org that already has one, confirm it succeeds and the wizard returns normally (no more `42501`).
+4. Also worth a quick sanity check once applied: confirm the *first* event a brand-new org_admin ever creates still works too (this bug should have been hitting every org_admin's very first event, not just second+ events — worth understanding why it apparently didn't block earlier testing, in case there's a second factor at play CC should flag rather than assume away).
+5. Report back — this phase is done once the migration is applied and reported, live-verification happens on the project owner's side per the agreed slow/one-phase-at-a-time process.
 
 **Stop here.**
 
@@ -92,6 +107,8 @@ Tab visibility and expense/donation create+delete permissions are all confirmed 
 ## Phase 7 — Investigate Phase 3's inconsistent beneficiary-detail visibility
 
 Original open item, still unresolved: an org_admin can see beneficiary registration details on one event but not another.
+
+**Check this first, before re-diagnosing from scratch:** Phase 1's confirmed root cause was a missing `SELECT` policy (org_admin couldn't read their own org's draft events). Given that pattern, check whether `beneficiaries` and/or `event_beneficiary_commitments` have a similarly incomplete `SELECT` policy set — e.g. one that covers published/non-draft state correctly but silently excludes some other legitimate case (draft beneficiaries, a specific status, or similar). If the "working" event and "non-working" event differ in some status/state dimension neither of us has checked yet, that's a strong lead. Don't assume it's the same bug, but check for the same *shape* of bug before assuming it's something new like an org_id mismatch.
 
 1. Check, in this order (per the original checklist notes):
    - Are the two events under the same org or different orgs?
