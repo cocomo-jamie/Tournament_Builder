@@ -76,6 +76,20 @@ export const events = {
     if (error) throw error;
     return data;
   },
+
+  // Event-day reconciliation (migration 029) — a separate manual figure
+  // for proceeds not captured as individual ledger rows (raffle, gate,
+  // concessions), added on top of the ledger-derived fundraising_current.
+  async updateReconciledAmount(eventId, amount) {
+    const { data, error } = await supabase
+      .from("events")
+      .update({ fundraising_reconciled_amount: amount })
+      .eq("id", eventId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -1149,6 +1163,41 @@ export const fanDonations = {
       .single();
     if (error) throw error;
     return data;
+  },
+
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from("fan_donations")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async remove(id) {
+    const { error } = await supabase.from("fan_donations").delete().eq("id", id);
+    if (error) throw error;
+  },
+};
+
+// Ledger-derived fundraising total (Phase 5 fix, migration 029) —
+// fundraising_current is no longer a free-text manual field. It's
+// recomputed here after every expense/donation create/edit/delete and
+// written back to events.fundraising_current, same "app writes the
+// column, no service-role trigger" pattern as everything else.
+export const ledger = {
+  async recomputeFundraising(eventId) {
+    const [donationsRes, expensesRes] = await Promise.all([
+      supabase.from("fan_donations").select("amount").eq("event_id", eventId),
+      supabase.from("expenses").select("amount").eq("event_id", eventId),
+    ]);
+    if (donationsRes.error) throw donationsRes.error;
+    if (expensesRes.error) throw expensesRes.error;
+    const donationsTotal = donationsRes.data.reduce((s, d) => s + (d.amount || 0), 0);
+    const expensesTotal = expensesRes.data.reduce((s, e) => s + (e.amount || 0), 0);
+    return events.updateFundraising(eventId, donationsTotal - expensesTotal);
   },
 };
 

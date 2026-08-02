@@ -1,0 +1,35 @@
+-- ═══════════════════════════════════════════════════════════════════════
+-- Migration 029: fundraising reconciliation amount
+-- ═══════════════════════════════════════════════════════════════════════
+-- Phase 5 of CC_WORK_ORDER_billing_beneficiary_fixes.md. Two changes to
+-- how the fundraising thermometer works, per the project owner's
+-- decision on this phase:
+--
+-- 1. `fundraising_current` stops being a free-text manual field and
+--    becomes ledger-derived (sum(fan_donations) - sum(expenses)),
+--    recomputed client-side after every expense/donation create, edit,
+--    or delete (src/services/api.js `ledger.recomputeFundraising`) —
+--    same "no service-role access, app writes the column" pattern as
+--    everything else in this project. This migration does not enforce
+--    that server-side; it's an application-level invariant, same as
+--    `fundraising_current` already was before this migration.
+--
+-- 2. New `fundraising_reconciled_amount` column: a separate manually-
+--    entered figure for event-day proceeds not captured as individual
+--    fan_donations/expenses rows (e.g. 50/50 raffle, gate/concession
+--    profit) — reconciled and added once, typically at event close.
+--    The public thermometer displays `fundraising_current +
+--    fundraising_reconciled_amount`; the goal can legitimately sit
+--    below 100% for the donations-only portion until this is added.
+--
+-- No RLS changes needed — `fundraising_reconciled_amount` is just
+-- another column on `events`, covered by the same existing
+-- "Admin full events" (write) / "Public read events" (read, non-draft
+-- only) policies as `fundraising_current` and `fundraising_goal`.
+--
+-- NOT APPLIED TO THE LIVE DB. Same manual-application pattern as every
+-- other migration in this project — committed for the project owner to
+-- run via the Supabase SQL Editor.
+-- ═══════════════════════════════════════════════════════════════════════
+
+ALTER TABLE events ADD COLUMN fundraising_reconciled_amount NUMERIC DEFAULT 0 NOT NULL;

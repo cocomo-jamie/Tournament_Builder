@@ -73,7 +73,7 @@ function Hero({ onReg }) {
         {C.fundraising.showThermometer && (
           <div className="anim3" style={{ maxWidth: 480, margin: "0 auto 36px", background: "#ffffff08", border: "1px solid #ffffff12", borderRadius: 16, padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Thermometer size={14} color={C.brand.accent} /><span className="fb" style={{ fontSize: 12, fontWeight: 700, color: C.brand.accent, textTransform: "uppercase", letterSpacing: 1 }}>Fundraising Progress</span></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Thermometer size={14} color={C.brand.accent} /><span className="fb" style={{ fontSize: 12, fontWeight: 700, color: C.brand.accent, textTransform: "uppercase", letterSpacing: 1 }}>Donations Received</span></div>
               <span className="fb" style={{ fontSize: 11, color: "#ffffff60" }}>Goal: ${C.fundraising.goal.toLocaleString()}</span>
             </div>
             <div style={{ height: 28, background: "#ffffff10", borderRadius: 14, overflow: "hidden", position: "relative" }}>

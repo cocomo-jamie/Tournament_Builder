@@ -36,71 +36,68 @@ create policy "Org admin read own events"
 
 ---
 
-## Phase 2 — Fix Phase 4: public commitment notice doesn't render
+## Phase 2 — ✅ RESOLVED 2026-08-01: public commitment notice now renders
 
-Confirmed broken on two independently-built events (different orgs, different beneficiaries, both with published commitments) — not an empty-state/wrong-event issue.
+**Root cause:** migration `022_beneficiary_commitments_public_view.sql` was written but never actually applied to the live DB — same failure pattern as migration 010's history (marked done, never run). Every piece of application code was correctly built (the API call, the component, mounting on all four required surfaces) — it was just querying a view that didn't exist. Confirmed via `information_schema.views` returning zero rows for `beneficiary_commitments_public` before the fix.
 
-1. Trace the data path for the public event page's Cause section: does it query `event_beneficiary_commitments` (joined to `beneficiaries`) at all, or is the component present but not wired to real data, or is the query firing but RLS is blocking it for anonymous/public reads?
-   - Note from the original spec: `beneficiaries` and `event_beneficiary_commitments` RLS is **admin-scoped only** (`is_event_admin_for`/`is_org_admin_for`) — "the public-facing surfaces read through a narrower path, see that phase" was the original Phase 4 intent. Check whether that narrower public-read path was actually built, or whether the public page is just hitting the same admin-only-RLS'd tables and silently getting zero rows back.
-2. Fix whichever of the three it turns out to be (missing public read path is the most likely candidate given the RLS note above).
-3. Once the public event page renders correctly, check the other three surfaces (team registration form, volunteer application form, invite-acceptance page) using the same data path — confirm they either already work once the root cause is fixed, or need their own fix if they use a different code path.
-4. Confirm the negative case still holds: a non-charity event, or a charity event with an unpublished/draft-only commitment, shows nothing on all four surfaces.
-5. Report back with what the actual root cause was and which surfaces are now confirmed working.
+**Fix:** applied migration 022 live. Confirmed after: view exists with the correct definition (published commitments only, `beneficiary_name` + `commitment_text`), `anon`/`authenticated` both have `SELECT` grants, and all three test events' underlying data was already correct (`is_charity: true`, `commitment_status: 'published'`, real `commitment_text`/`beneficiary_name` — the data was never the problem, only the missing view).
 
-**Stop here.**
+**Live-verified:** public event page (logged out, incognito) now renders the Cause section correctly for a real test event ("Annual Golf Tournament").
 
----
+**Not yet individually re-tested:** the other three surfaces (team registration form, volunteer application form, invite-acceptance page) — CC's code trace found all three correctly wired to the same component/API call that's now confirmed working, so likely fine, but not yet each individually click-tested live. Worth a quick pass before fully closing this out, given this project's history of "should work" not always matching "does work."
 
-## Phase 3 — Build an event status-advance control
-
-Currently `draft → registration_open` is the only transition with a UI control anywhere (from the earlier publish-fix work). Nothing advances an event through `registration_closed → game_day → completed → archived` — no admin control exists for any role, including super_admin. This blocks all of Phase 5's fulfillment-evidence testing.
-
-1. Decide placement — likely the same admin view/tab where the existing publish control lives, so event lifecycle state is managed in one place.
-2. Add a control (dropdown or sequential "advance" button — CC's call, note the choice) that calls the existing `events.update(eventId, { status: ... })` path with the next status in the sequence. Confirm whether `api.js` already has a generic status-update function usable here or whether one needs adding.
-3. Gate it the same way the existing publish control is gated (`is_org_admin_for`/`is_event_admin_for`, not just tab visibility) — same permission-check discipline as the original publish-fix work order.
-4. Add/confirm a visible status indicator so the current lifecycle stage isn't a mystery (may already exist from the publish-fix work — check before adding a duplicate).
-5. Do not build any date/calendar-driven automation — confirmed manual-only is the right scope here, consistent with the rest of this project having no scheduled-job infrastructure.
-6. Report back with what was built and exactly which statuses can now be reached via the UI.
-
-**Stop here.**
+**Also fixed along the way:** `BeneficiaryCommitmentNotice.jsx` was silently swallowing all fetch errors (`.catch(() => setNotice(null))`), making "no commitment" and "the query is failing" indistinguishable. CC added `console.error` logging on that catch — worth keeping, it's what made this diagnosis fast once the view was confirmed present.
 
 ---
 
-## Phase 4 — Reconcile missing Phase 7 billing UI
+## Phase 3 — ✅ RESOLVED 2026-08-02: event status-advance control built and live-verified
 
-BillingPanel (super_admin) and BillingSummaryCard (org_admin Team tab) are not found anywhere in the deployed app, despite migrations 025/027 and the original work order describing them as built.
+**Built:** extended the existing `EventStatusCard` (Publish tab, `AdminDashboard.jsx`) with a sequential "advance" button (CC's call over a dropdown — a linear one-directional control makes skipping stages harder to do by accident) covering the full lifecycle `draft → registration_open → registration_closed → game_day → completed → archived`. Reused the existing `events.updateStatus(eventId, status)` — no new API function needed. The charity-commitment gate is preserved and fires only on the `draft → registration_open` step, unchanged from before; every other transition is a plain status update with no additional gating (none was specified). `archived` is terminal — button disappears, replaced with a "Final stage" indicator. Also extended the `Badge` component with colors/labels for all five non-draft statuses (previously only handled draft/published). No new RLS needed — `events` UPDATE was already covered by migration 010's `"Admin full events"` policy.
 
-1. Check the actual codebase (not `PROJECT_STATUS.md` — that doc has a history of claiming things are done that weren't) for whether `BillingPanel`/`BillingSummaryCard` components exist at all.
-   - **If they don't exist in the codebase:** Phase 7 of the original work order was never actually built past the migrations — report this plainly, don't guess why.
-   - **If they exist in the codebase but aren't rendering:** check whether they're imported/mounted anywhere (e.g. commented out, behind a flag, or added to a branch that never made it into what's deployed to `cocomo-events.netlify.app`).
-2. Do not rebuild from scratch without reporting first — if the components already exist and just need to be wired in, that's a much smaller fix than a full rebuild, and this needs to be known before deciding scope.
-3. Report back with the actual state found, and if it just needs wiring in, note what that would take before doing it (separate stop/report, don't fix in the same phase as the diagnosis).
+**Live-verified:** full sequence clicked through end to end including reaching `archived`; charity-commitment gate confirmed still blocking `draft → registration_open` correctly; the button itself doesn't get lost even when a fulfillment-evidence banner pushes it down the page (initial confusion during testing, resolved — not a bug, just needed to scroll).
 
-**Stop here.**
+**Bonus — also live-verified while here:** the original Phase 5 fulfillment-evidence lifecycle from the 07-31 build, untestable until this phase unblocked reaching `completed`. Confirmed working end to end: evidence submission (real file, description, timestamp all persisted correctly on `event_beneficiary_commitments`), super_admin's Beneficiary Evidence Review UI (found at `/super-admin` — briefly looked broken due to a URL-typing slip in testing, not a real bug), and Confirm action (`fulfillment_status: submitted → confirmed`, `reviewed_by`/`reviewed_at` populate correctly). This fully closes out the original checklist's Phase 5 item — no separate phase for it exists in this fix work order since unblocking it *was* this phase's stated purpose, and it's now verified done, not just unblocked.
 
 ---
 
-## Phase 5 — Ledger fixes (Phase 6 gaps)
+## Phase 4 — ✅ RESOLVED 2026-08-02, no CC work needed
 
-Tab visibility and expense/donation create+delete permissions are all confirmed correct — these are additive fixes, not a rebuild.
+**Directly verified by the project owner** — the billing UI is real and fully functional, just inline in `SuperAdminDashboard.jsx` rather than separately-named `BillingPanel`/`BillingSummaryCard` components as originally described. Confirmed: super_admin can create org subscriptions and per-event billing, status cycles correctly, `paid` auto-stamps `paid_at`, org_admin's Team tab renders the same data read-only, and the specific `created_at` ordering bug the earlier fix targeted is genuinely fixed (newest subscription always shown, not an arbitrary one). No CC investigation or fix required — first phase in this work order closed entirely through direct testing.
 
-1. Add edit capability for expenses (currently add/delete only).
-2. Wire expenses into the running total — currently only donations affect it; expenses are tracked but don't move the number.
-3. Add update + delete for fan donations (currently create/read only).
-4. Re-confirm running total recalculates correctly on every operation (add/edit/delete expense; add/edit/delete donation) once the above exist.
-5. Report back with what changed.
-
-**Stop here.**
+**New scope surfaced during this verification, not part of this fix work order:** the billing schema has no pricing logic, no start/end dates, and no freeze/thaw access-control model. A full concept for this was captured — see `FEATURE_SPEC_billing_pricing_and_freeze_model_CONCEPT.md` and `PROJECT_STATUS.md`'s backlog item 5. Separate future feature, not a gap in Phase 7's original scope.
 
 ---
 
-## Phase 6 — Beneficiary commitment: allow editing a draft
+## Phase 5 — ✅ RESOLVED 2026-08-02: ledger fixes built and fully live-verified, scope expanded mid-phase
 
-1. Add edit capability for a commitment while `status = 'draft'`.
-2. Confirm a `published` commitment remains immutable (no edit path) — this is intentional, matching the "written commitment" framing; don't loosen this while fixing the draft case.
-3. Report back.
+**Premise correction from CC before starting:** the work order's assumption ("currently only donations affect the running total") didn't match the actual code — neither donations nor expenses moved `fundraising_current`; it was a fully manual number, admin-typed only. Flagged before building rather than silently building on a wrong premise. Project owner directed a scope expansion on the spot: (a) auto-derive the total from the ledger, (b) add a separate event-day reconciliation figure for proceeds not captured as ledger rows (raffle, gate, concessions), (c) relabel the thermometer "Donations Received."
 
-**Stop here.**
+**Built:**
+1. Expense edit — `expensesApi.update` existed but was unwired; now has a UI (create/edit form + Edit button per row).
+2. Fan donation edit + delete — added `fanDonationsApi.update`/`.remove`, wired to UI with the same create/edit/delete pattern.
+3. Running total auto-derived from the ledger — new `ledger.recomputeFundraising(eventId)` sums donations minus expenses into `events.fundraising_current`, fires after every mutating action in either section through one shared `onLedgerChange` callback (single recompute path, not per-action duplicated logic).
+4. Event-Day Reconciliation (scope addition) — new `events.fundraising_reconciled_amount` column (migration 029, applied live 2026-08-02, confirmed via `information_schema.columns`). Thermometer now shows donations-net and reconciled amounts as two distinct figures, not blended — correct that it can sit under 100% mid-event and jump at reconciliation.
+5. Label change — "Fundraising Progress" → "Donations Received" (public thermometer), "Raised" → "Received" (admin panel stat).
+
+**Live-verified, end to end, with explicit before/after checks at each step (not just "no errors"):**
+- Expense edit confirmed via targeted re-query on a specific known `id` (not just "a row exists") — genuinely persists.
+- Fan donation edit and delete both confirmed the same rigorous way — edit checked by id, delete confirmed via a zero-row follow-up query.
+- **Recompute path walked through all four mutation types in sequence** (add expense → drop; edit expense → adjust; delete donation → drop; add donation → rise), checking `fundraising_current` after each step and cross-checking both the admin panel and public thermometer show the same live value, not a stale one. All passed cleanly.
+- Event-Day Reconciliation confirmed showing as a genuinely separate figure from the ledger-derived total, and the "Donations Received" label confirmed live.
+
+**One small gap noted, not a blocker:** `expenses` has no `updated_at` column, so there's no way to see *when* an expense was last edited, only `created_at`. Worth folding into a future migration if edit-history ever matters.
+
+---
+
+## Phase 6 — ✅ RESOLVED 2026-08-02: draft editing built, published immutability confirmed UI-level only (accepted)
+
+**Built:** `CommitmentForm` now supports edit mode (same pattern as Phase 5's expense/donation forms) — pre-fills beneficiary + text, calls `commitmentsApi.update()` instead of create. Both "Sign & Publish" and "Save as Draft" remain available while editing, so edit-then-publish works in one step. `BeneficiaryCommitmentPanel`'s Edit button only renders when `status === 'draft'`.
+
+**Live-verified:** draft edit persists correctly (confirmed via direct id-targeted query, not just UI trust); edit-then-publish flips `status`/`signed_by`/`signed_at` correctly in one step; Edit button genuinely absent once published.
+
+**Real finding, tested rigorously, not just assumed:** published-commitment immutability is **UI-level only, not enforced at the RLS/DB level**. Directly tested — a raw SQL `UPDATE` against a `published` commitment's `commitment_text` succeeded with no error, confirmed by re-querying the row. `event_beneficiary_commitments`'s existing `is_event_admin_for` UPDATE policy has no status-based `WITH CHECK`, so any admin with legitimate DB/API access to that org (not just the UI) could alter a "signed" commitment after the fact.
+
+**Decision, made explicitly rather than left ambiguous:** accepted as-is — UI-level only, documented as a known, accepted limitation rather than fixed. Reasoning: matches this project's existing pattern elsewhere, and the only people who could exploit this already have legitimate access to that org's data — this isn't a stranger tampering with someone else's commitment. Revisit if the beneficiary/fulfillment feature ever needs to support a stronger accountability guarantee (e.g. external auditors relying on "published = immutable" being literally true, not just normally-true-via-the-UI).
 
 ---
 

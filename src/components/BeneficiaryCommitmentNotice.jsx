@@ -24,7 +24,7 @@ export default function BeneficiaryCommitmentNotice({ eventId, isCharity = true,
     }
     commitmentsApi.getPublicNotice(eventId)
       .then(data => { if (!cancelled) setNotice(data); })
-      .catch(() => { if (!cancelled) setNotice(null); });
+      .catch(err => { console.error("BeneficiaryCommitmentNotice: getPublicNotice failed", err); if (!cancelled) setNotice(null); });
     return () => { cancelled = true; };
   }, [eventId, isCharity]);
 

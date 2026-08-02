@@ -112,11 +112,20 @@ export function transformEventToConfig(event, options = {}) {
       closing: causeClosing,
       charityLogoUrl: event.charity_logo_url || "",
     },
-    fundraising: {
-      goal: parseFloat(event.fundraising_goal) || 0,
-      current: parseFloat(event.fundraising_current) || 0,
-      showThermometer: event.show_thermometer ?? true,
-    },
+    fundraising: (() => {
+      const donationsNet = parseFloat(event.fundraising_current) || 0;
+      const reconciledAmount = parseFloat(event.fundraising_reconciled_amount) || 0;
+      return {
+        goal: parseFloat(event.fundraising_goal) || 0,
+        // Ledger-derived (donations - expenses) — see api.js's ledger.recomputeFundraising.
+        donationsNet,
+        // Manual, event-day figure for proceeds not in the ledger (raffle, gate, concessions).
+        reconciledAmount,
+        // What the thermometer actually displays/tracks toward goal.
+        current: donationsNet + reconciledAmount,
+        showThermometer: event.show_thermometer ?? true,
+      };
+    })(),
 
     // ── Registration ──
     registration: {

@@ -11,13 +11,13 @@ import {
   CircleDot, ArrowUpDown, ExternalLink, Download,
   Undo2, Save, CreditCard as Card, BookOpen, Printer,
   Timer, Ban, SkipForward, Shuffle, LayoutGrid, Sliders,
-  BadgeCheck, QrCode, Scissors, UserPlus, Copy, Globe
+  BadgeCheck, QrCode, Scissors, UserPlus, Copy, Globe, ArrowRight
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import QRCode from "qrcode";
 import { useEvent } from "../context/EventContext";
 import { useAuth } from "../context/AuthContext";
-import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi, beneficiaries as beneficiariesApi, commitments as commitmentsApi, expenses as expensesApi, fanDonations as fanDonationsApi, billing as billingApi } from "../services/api";
+import { registrations as registrationsApi, volunteers as volunteersApi, events as eventsApi, teams as teamsApi, players as playersApi, matches as matchesApi, announcements as announcementsApi, brackets as bracketsApi, activityLog, admin as adminApi, beneficiaries as beneficiariesApi, commitments as commitmentsApi, expenses as expensesApi, fanDonations as fanDonationsApi, ledger as ledgerApi, billing as billingApi } from "../services/api";
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 import { useScreenLock } from "../hooks/useScreenLock";
 import { verifyBeneficiaryRegistration } from "../utils/verifyBeneficiaryRegistration";
@@ -66,9 +66,12 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
   );
 }
 
-function Badge({ status }) {
-  const m = { paid: "#22c55e", pending: "#f59e0b", confirmed: "#22c55e", submitted: "#f59e0b", rejected: "#ef4444", approved: "#22c55e", declined: "#ef4444", draft: "#6b7280", review: "#3b82f6", published: "#22c55e" };
-  return <span style={S.badge(m[status] || "#6b7280")}>{status}</span>;
+function Badge({ status, label }) {
+  const m = {
+    paid: "#22c55e", pending: "#f59e0b", confirmed: "#22c55e", submitted: "#f59e0b", rejected: "#ef4444", approved: "#22c55e", declined: "#ef4444", draft: "#6b7280", review: "#3b82f6", published: "#22c55e",
+    registration_open: "#22c55e", registration_closed: "#f59e0b", game_day: "#3b82f6", completed: "#8b5cf6", archived: "#6b7280",
+  };
+  return <span style={S.badge(m[status] || "#6b7280")}>{label || status}</span>;
 }
 
 function MethodIcon({ m }) {
@@ -691,10 +694,10 @@ function BeneficiariesPanel({ orgId, B }) {
 /* ═══════════════════════════════════════════════════════════
    BUILD — BENEFICIARY COMMITMENT (event-scoped, charity events only)
    ═══════════════════════════════════════════════════════════ */
-function CommitmentForm({ eventId, orgId, adminUserId, onSaved, onCancel, B }) {
+function CommitmentForm({ eventId, orgId, adminUserId, initial, onSaved, onCancel, B }) {
   const [orgBeneficiaries, setOrgBeneficiaries] = useState([]);
-  const [beneficiaryId, setBeneficiaryId] = useState("");
-  const [commitmentText, setCommitmentText] = useState("");
+  const [beneficiaryId, setBeneficiaryId] = useState(initial?.beneficiary_id || "");
+  const [commitmentText, setCommitmentText] = useState(initial?.commitment_text || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -715,13 +718,18 @@ function CommitmentForm({ eventId, orgId, adminUserId, onSaved, onCancel, B }) {
     setSaving(true);
     setError(null);
     try {
-      await commitmentsApi.create(eventId, {
+      const fields = {
         beneficiary_id: beneficiaryId,
         commitment_text: commitmentText.trim(),
         signed_by: adminUserId,
         signed_at: new Date().toISOString(),
         status: publish ? "published" : "draft",
-      });
+      };
+      if (initial) {
+        await commitmentsApi.update(initial.id, fields);
+      } else {
+        await commitmentsApi.create(eventId, fields);
+      }
       onSaved();
     } catch (err) {
       console.error("Failed to save commitment:", err);
@@ -751,7 +759,7 @@ function CommitmentForm({ eventId, orgId, adminUserId, onSaved, onCancel, B }) {
       {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button onClick={() => handleSave(true)} disabled={saving} style={S.btn("#22c55e", "#fff")}>{saving ? "Saving..." : "Sign & Publish"}</button>
-        <button onClick={() => handleSave(false)} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save as Draft"}</button>
+        <button onClick={() => handleSave(false)} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : initial ? "Save Changes" : "Save as Draft"}</button>
         <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
       </div>
     </div>
@@ -891,6 +899,7 @@ function BeneficiaryCommitmentPanel({ eventId, orgId, B }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const refresh = async () => {
     if (!eventId) return;
@@ -923,7 +932,7 @@ function BeneficiaryCommitmentPanel({ eventId, orgId, B }) {
     <div style={{ ...S.card, marginTop: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Heart size={16} color={B.accent} /> Beneficiary Commitment</h3>
-        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ New Commitment</button>}
+        {!creating && !editing && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ New Commitment</button>}
       </div>
       <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>
         This event is flagged as a charity event — a published commitment is required before the event can be published.
@@ -940,6 +949,7 @@ function BeneficiaryCommitmentPanel({ eventId, orgId, B }) {
               <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{c.beneficiary?.name || "—"}</p>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={S.badge(c.status === "published" ? "#22c55e" : "#ffffff60")}>{c.status}</span>
+                {c.status === "draft" && <button onClick={() => { setEditing(c); setCreating(false); }} style={S.btnSm("#ffffff10", "#ffffffaa")}>Edit</button>}
                 {c.status === "draft" && <button onClick={() => publish(c.id)} style={S.btnSm("#22c55e", "#fff")}>Publish</button>}
               </div>
             </div>
@@ -959,40 +969,54 @@ function BeneficiaryCommitmentPanel({ eventId, orgId, B }) {
           onSaved={() => { setCreating(false); refresh(); }}
         />
       )}
+      {editing && (
+        <CommitmentForm
+          eventId={eventId}
+          orgId={orgId}
+          adminUserId={adminUser?.id}
+          initial={editing}
+          B={B}
+          onCancel={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refresh(); }}
+        />
+      )}
     </div>
   );
 }
 
 function FundraisingPanel() {
-  const { config, eventId } = useEvent();
+  const { config, eventId, refetch } = useEvent();
   const { adminUser } = useAuth();
   const B = config.brand;
   const orgId = config?._raw?.org_id;
   const canManageBeneficiaries = adminUser?.role === "org_admin" || adminUser?.role === "super_admin";
 
   const goal = config.fundraising.goal || 15000;
-  const [saved, setSaved] = useState(config.fundraising.current || 0);
-  const [current, setCurrent] = useState(config.fundraising.current || 0);
+  const donationsNet = config.fundraising.donationsNet || 0;
+  const current = config.fundraising.current || 0; // donationsNet + reconciledAmount — what the thermometer shows
+  const [saved, setSaved] = useState(config.fundraising.reconciledAmount || 0);
+  const [reconciled, setReconciled] = useState(config.fundraising.reconciledAmount || 0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
   const pct = goal > 0 ? Math.min(100, (current / goal) * 100) : 0;
-  const changed = current !== saved;
+  const changed = reconciled !== saved;
 
   useEffect(() => {
-    const configCurrent = config.fundraising.current || 0;
-    setSaved(configCurrent);
-    setCurrent(configCurrent);
-  }, [config.fundraising.current]);
+    const configReconciled = config.fundraising.reconciledAmount || 0;
+    setSaved(configReconciled);
+    setReconciled(configReconciled);
+  }, [config.fundraising.reconciledAmount]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await eventsApi.updateFundraising(eventId, current);
-      setSaved(current);
+      await eventsApi.updateReconciledAmount(eventId, reconciled);
+      setSaved(reconciled);
+      await refetch();
     } catch (err) {
-      console.error("Fundraising update failed:", err);
+      console.error("Reconciliation update failed:", err);
       setSubmitError("Failed to update. Please try again.");
     } finally {
       setSubmitting(false);
@@ -1003,7 +1027,7 @@ function FundraisingPanel() {
     <div>
       <div style={{ ...S.card, marginBottom: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Thermometer size={16} color={B.accent} /> Fundraising</h3>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Thermometer size={16} color={B.accent} /> Donations Received</h3>
           <span style={{ fontSize: 12, color: "#ffffff50" }}>Goal: ${goal.toLocaleString()}</span>
         </div>
         <div style={{ height: 32, background: "#ffffff10", borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
@@ -1012,19 +1036,23 @@ function FundraisingPanel() {
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, textAlign: "center" }}>
-          <div><p style={{ fontSize: 24, fontWeight: 900, color: "#fff" }}>${current.toLocaleString()}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Raised</p></div>
+          <div><p style={{ fontSize: 24, fontWeight: 900, color: "#fff" }}>${current.toLocaleString()}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Received</p></div>
           <div><p style={{ fontSize: 24, fontWeight: 900, color: B.accent }}>${(goal - current).toLocaleString()}</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Remaining</p></div>
           <div><p style={{ fontSize: 24, fontWeight: 900, color: B.secondary }}>{Math.round(pct)}%</p><p style={{ fontSize: 11, color: "#ffffff50" }}>Progress</p></div>
         </div>
+        <p style={{ fontSize: 11, color: "#ffffff40", marginTop: 12 }}>
+          ${donationsNet.toLocaleString(undefined, { minimumFractionDigits: 2 })} from donations (net of expenses, tracked automatically in the Ledger tab){reconciled > 0 ? ` + $${reconciled.toLocaleString(undefined, { minimumFractionDigits: 2 })} reconciled` : ""}.
+        </p>
       </div>
       <div style={S.card}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#ffffff80", marginBottom: 12 }}>Update Amount</h3>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#ffffff80", marginBottom: 4 }}>Event-Day Reconciliation</h3>
+        <p style={{ fontSize: 12, color: "#ffffff40", marginBottom: 12 }}>Additional proceeds not tracked as individual ledger entries — raffle, gate, concessions, etc. Add this once, typically at event close, on top of the donations total above.</p>
         <div style={{ display: "flex", gap: 10 }}>
           <div style={{ position: "relative", flex: 1 }}><span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#ffffff50" }}>$</span>
-            <input type="number" value={current} onChange={e => setCurrent(parseInt(e.target.value) || 0)} style={{ ...S.input, paddingLeft: 28 }} /></div>
+            <input type="number" value={reconciled} onChange={e => setReconciled(parseFloat(e.target.value) || 0)} style={{ ...S.input, paddingLeft: 28 }} /></div>
         </div>
       </div>
-      <SubmitBar count={changed ? 1 : 0} onSubmit={handleSubmit} onDiscard={() => setCurrent(saved)} submitting={submitting} error={submitError} />
+      <SubmitBar count={changed ? 1 : 0} onSubmit={handleSubmit} onDiscard={() => setReconciled(saved)} submitting={submitting} error={submitError} />
       {/* Gated to org_admin/super_admin, same as BeneficiariesPanel below: migration
           021's RLS only grants beneficiaries SELECT to is_org_admin_for(org_id), so
           an event-scoped 'admin' can't read the org's beneficiary list to pick one
@@ -1042,11 +1070,11 @@ function FundraisingPanel() {
 const EXPENSE_CATEGORIES = ["Venue", "Equipment", "Food & Beverage", "Prizes", "Printing", "Permits", "Other"];
 const DONATION_METHODS = ["e_transfer", "cash", "stripe", "manual"];
 
-function ExpenseForm({ eventId, adminUserId, onSaved, onCancel, B }) {
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [paidTo, setPaidTo] = useState("");
+function ExpenseForm({ eventId, adminUserId, initial, onSaved, onCancel, B }) {
+  const [category, setCategory] = useState(initial?.category || EXPENSE_CATEGORIES[0]);
+  const [description, setDescription] = useState(initial?.description || "");
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [paidTo, setPaidTo] = useState(initial?.paid_to || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1059,10 +1087,12 @@ function ExpenseForm({ eventId, adminUserId, onSaved, onCancel, B }) {
     setSaving(true);
     setError(null);
     try {
-      await expensesApi.create(eventId, {
-        category, description: description.trim() || null, amount: amt,
-        paid_to: paidTo.trim() || null, paid_by: adminUserId,
-      });
+      const fields = { category, description: description.trim() || null, amount: amt, paid_to: paidTo.trim() || null };
+      if (initial) {
+        await expensesApi.update(initial.id, fields);
+      } else {
+        await expensesApi.create(eventId, { ...fields, paid_by: adminUserId });
+      }
       onSaved();
     } catch (err) {
       console.error("Failed to save expense:", err);
@@ -1096,17 +1126,18 @@ function ExpenseForm({ eventId, adminUserId, onSaved, onCancel, B }) {
       </div>
       {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save Expense"}</button>
+        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : initial ? "Save Changes" : "Save Expense"}</button>
         <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
       </div>
     </div>
   );
 }
 
-function ExpensesSection({ eventId, adminUserId, B }) {
+function ExpensesSection({ eventId, adminUserId, B, onLedgerChange }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -1121,10 +1152,17 @@ function ExpensesSection({ eventId, adminUserId, B }) {
 
   useEffect(() => { refresh(); }, [eventId]);
 
+  const afterChange = async () => {
+    setCreating(false);
+    setEditing(null);
+    await refresh();
+    await onLedgerChange();
+  };
+
   const remove = async (id) => {
     try {
       await expensesApi.remove(id);
-      await refresh();
+      await afterChange();
     } catch (err) {
       console.error("Failed to delete expense:", err);
     }
@@ -1136,7 +1174,7 @@ function ExpensesSection({ eventId, adminUserId, B }) {
     <div style={S.card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={16} color={B.accent} /> Expenses</h3>
-        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Add Expense</button>}
+        {!creating && !editing && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Add Expense</button>}
       </div>
       {!loading && <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>{list.length} expense{list.length !== 1 ? "s" : ""} · ${total.toLocaleString(undefined, { minimumFractionDigits: 2 })} total</p>}
 
@@ -1152,6 +1190,7 @@ function ExpensesSection({ eventId, adminUserId, B }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 14, fontWeight: 700, color: "#ef4444" }}>-${e.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <button onClick={() => { setEditing(e); setCreating(false); }} style={S.btnSm("#ffffff10", "#ffffffaa")}>Edit</button>
               <button onClick={() => remove(e.id)} style={S.btnSm("#ffffff10", "#ffffffaa")}>Delete</button>
             </div>
           </div>
@@ -1159,17 +1198,20 @@ function ExpensesSection({ eventId, adminUserId, B }) {
       </div>
 
       {creating && (
-        <ExpenseForm eventId={eventId} adminUserId={adminUserId} B={B} onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
+        <ExpenseForm eventId={eventId} adminUserId={adminUserId} B={B} onCancel={() => setCreating(false)} onSaved={afterChange} />
+      )}
+      {editing && (
+        <ExpenseForm eventId={eventId} adminUserId={adminUserId} initial={editing} B={B} onCancel={() => setEditing(null)} onSaved={afterChange} />
       )}
     </div>
   );
 }
 
-function FanDonationForm({ eventId, onSaved, onCancel, B }) {
-  const [donorName, setDonorName] = useState("");
-  const [donorEmail, setDonorEmail] = useState("");
-  const [amount, setAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState(DONATION_METHODS[0]);
+function FanDonationForm({ eventId, initial, onSaved, onCancel, B }) {
+  const [donorName, setDonorName] = useState(initial?.donor_name || "");
+  const [donorEmail, setDonorEmail] = useState(initial?.donor_email || "");
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [paymentMethod, setPaymentMethod] = useState(initial?.payment_method || DONATION_METHODS[0]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1182,13 +1224,17 @@ function FanDonationForm({ eventId, onSaved, onCancel, B }) {
     setSaving(true);
     setError(null);
     try {
-      await fanDonationsApi.create(eventId, {
+      const fields = {
         donor_name: donorName.trim() || null,
         donor_email: donorEmail.trim() || null,
         amount: amt,
         payment_method: paymentMethod,
-        payment_status: "paid",
-      });
+      };
+      if (initial) {
+        await fanDonationsApi.update(initial.id, fields);
+      } else {
+        await fanDonationsApi.create(eventId, { ...fields, payment_status: "paid" });
+      }
       onSaved();
     } catch (err) {
       console.error("Failed to save donation:", err);
@@ -1223,17 +1269,18 @@ function FanDonationForm({ eventId, onSaved, onCancel, B }) {
       </div>
       {error && <p style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : "Save Donation"}</button>
+        <button onClick={handleSave} disabled={saving} style={S.btn(B.accent, B.dark)}>{saving ? "Saving..." : initial ? "Save Changes" : "Save Donation"}</button>
         <button onClick={onCancel} style={S.btn("#ffffff10", "#ffffffaa")}>Cancel</button>
       </div>
     </div>
   );
 }
 
-function FanDonationsSection({ eventId, B }) {
+function FanDonationsSection({ eventId, B, onLedgerChange }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -1248,13 +1295,29 @@ function FanDonationsSection({ eventId, B }) {
 
   useEffect(() => { refresh(); }, [eventId]);
 
+  const afterChange = async () => {
+    setCreating(false);
+    setEditing(null);
+    await refresh();
+    await onLedgerChange();
+  };
+
+  const remove = async (id) => {
+    try {
+      await fanDonationsApi.remove(id);
+      await afterChange();
+    } catch (err) {
+      console.error("Failed to delete donation:", err);
+    }
+  };
+
   const total = list.reduce((s, d) => s + (d.amount || 0), 0);
 
   return (
     <div style={{ ...S.card, marginTop: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}><Heart size={16} color={B.accent} /> Fan Donations</h3>
-        {!creating && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Record Donation</button>}
+        {!creating && !editing && <button onClick={() => setCreating(true)} style={S.btnSm(B.accent, B.dark)}>+ Record Donation</button>}
       </div>
       {!loading && <p style={{ fontSize: 12, color: "#ffffff50", marginTop: 4 }}>{list.length} donation{list.length !== 1 ? "s" : ""} · ${total.toLocaleString(undefined, { minimumFractionDigits: 2 })} total</p>}
 
@@ -1268,27 +1331,43 @@ function FanDonationsSection({ eventId, B }) {
               <p style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{d.donor_name || "Anonymous"}</p>
               <p style={{ fontSize: 12, color: "#ffffff50" }}>{d.payment_method.replace("_", " ")}{d.team?.name ? ` · for ${d.team.name}` : ""}</p>
             </div>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>+${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>+${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <button onClick={() => { setEditing(d); setCreating(false); }} style={S.btnSm("#ffffff10", "#ffffffaa")}>Edit</button>
+              <button onClick={() => remove(d.id)} style={S.btnSm("#ffffff10", "#ffffffaa")}>Delete</button>
+            </div>
           </div>
         ))}
       </div>
 
       {creating && (
-        <FanDonationForm eventId={eventId} B={B} onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); refresh(); }} />
+        <FanDonationForm eventId={eventId} B={B} onCancel={() => setCreating(false)} onSaved={afterChange} />
+      )}
+      {editing && (
+        <FanDonationForm eventId={eventId} initial={editing} B={B} onCancel={() => setEditing(null)} onSaved={afterChange} />
       )}
     </div>
   );
 }
 
 function LedgerPanel() {
-  const { config, eventId } = useEvent();
+  const { config, eventId, refetch } = useEvent();
   const { adminUser } = useAuth();
   const B = config.brand;
 
+  const onLedgerChange = async () => {
+    try {
+      await ledgerApi.recomputeFundraising(eventId);
+    } catch (err) {
+      console.error("Failed to recompute fundraising total:", err);
+    }
+    await refetch();
+  };
+
   return (
     <div>
-      <ExpensesSection eventId={eventId} adminUserId={adminUser?.id} B={B} />
-      <FanDonationsSection eventId={eventId} B={B} />
+      <ExpensesSection eventId={eventId} adminUserId={adminUser?.id} B={B} onLedgerChange={onLedgerChange} />
+      <FanDonationsSection eventId={eventId} B={B} onLedgerChange={onLedgerChange} />
     </div>
   );
 }
@@ -1436,33 +1515,48 @@ function BuildContext() {
 /* ═══════════════════════════════════════════════════════════
    PUBLISH — with ID Badge Preview
    ═══════════════════════════════════════════════════════════ */
+// Full event lifecycle, in order. draft → registration_open is gated by the
+// charity-commitment check below; the rest are plain manual advances (no
+// date/calendar automation — confirmed out of scope).
+const STATUS_FLOW = ["draft", "registration_open", "registration_closed", "game_day", "completed", "archived"];
+const STATUS_LABELS = {
+  draft: "Draft",
+  registration_open: "Registration Open",
+  registration_closed: "Registration Closed",
+  game_day: "Game Day",
+  completed: "Completed",
+  archived: "Archived",
+};
+
 function EventStatusCard() {
   const { config, eventId, refetch } = useEvent();
-  const B = config.brand;
   const status = config.event.status || "draft";
   const isPublished = status !== "draft";
-  const [publishing, setPublishing] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
   const [publishError, setPublishError] = useState(null);
 
-  const handlePublish = async () => {
-    if (publishing) return;
-    setPublishing(true);
+  const statusIndex = STATUS_FLOW.indexOf(status);
+  const nextStatus = statusIndex >= 0 ? STATUS_FLOW[statusIndex + 1] : null;
+
+  const handleAdvance = async () => {
+    if (advancing || !nextStatus) return;
+    setAdvancing(true);
     setPublishError(null);
     try {
-      if (config.cause.isCharity) {
+      if (nextStatus === "registration_open" && config.cause.isCharity) {
         const published = await commitmentsApi.getPublished(eventId);
         if (!published) {
           setPublishError("This is a charity event — ask your org admin to add and publish a beneficiary commitment before this event can go live.");
           return;
         }
       }
-      await eventsApi.updateStatus(eventId, "registration_open");
+      await eventsApi.updateStatus(eventId, nextStatus);
       await refetch();
     } catch (err) {
-      console.error("Failed to publish event:", err);
-      setPublishError("Failed to publish. Please try again.");
+      console.error("Failed to advance event status:", err);
+      setPublishError("Failed to update event status. Please try again.");
     } finally {
-      setPublishing(false);
+      setAdvancing(false);
     }
   };
 
@@ -1471,21 +1565,22 @@ function EventStatusCard() {
       <div>
         <p style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Event Status</p>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Badge status={isPublished ? "published" : "draft"} />
+          <Badge status={status} label={STATUS_LABELS[status] || status} />
           <span style={{ fontSize: 12, color: "#ffffff50" }}>
             {isPublished ? "Public page is live at /e/" + eventId : "Public page returns \"not public yet\" until published"}
           </span>
         </div>
       </div>
-      {!isPublished ? (
+      {nextStatus ? (
         <div style={{ textAlign: "right" }}>
-          <button onClick={handlePublish} disabled={publishing} style={{ ...S.btn("#22c55e", "#fff"), opacity: publishing ? 0.7 : 1 }}>
-            <Globe size={14} /> {publishing ? "Publishing..." : "Publish Event"}
+          <button onClick={handleAdvance} disabled={advancing} style={{ ...S.btn("#22c55e", "#fff"), opacity: advancing ? 0.7 : 1 }}>
+            {status === "draft" ? <Globe size={14} /> : <ArrowRight size={14} />}
+            {advancing ? "Updating..." : status === "draft" ? "Publish Event" : `Advance to ${STATUS_LABELS[nextStatus]}`}
           </button>
           {publishError && <p style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{publishError}</p>}
         </div>
       ) : (
-        <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Live</span>
+        <span style={{ fontSize: 12, color: "#ffffff50", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Final stage</span>
       )}
     </div>
   );
