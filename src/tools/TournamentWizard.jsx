@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Trophy, Users, MapPin, Heart, DollarSign, Megaphone,
   ChevronRight, ChevronLeft, Check, Copy, Download,
@@ -12,7 +12,8 @@ import {
   CircleDot, LayoutGrid, UserPlus, Banknote, RefreshCw
 } from "lucide-react";
 import { createTournament } from "../services/createTournament";
-import { useNavigate } from "react-router-dom";
+import { admin as adminApi } from "../services/api";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 /* ═══════════════════════════════════════════════════════════
@@ -390,7 +391,53 @@ const initialState = {
 export default function TournamentBuilderWizard() {
   const navigate = useNavigate();
   const { adminUser } = useAuth();
+  const [searchParams] = useSearchParams();
   const isOrgAdmin = !!adminUser?.org_id;
+  const isSuperAdmin = adminUser?.role === "super_admin";
+
+  // super_admin + ?orgId=<uuid>: launch the Wizard pre-scoped to an
+  // existing org (Move To nav "+ New Event" per org) rather than either
+  // creating a new org or being auto-scoped to their own (they have none).
+  // Re-validated below via adminApi.getOrganization — a stale/bad id
+  // should fail clearly, not silently create an event with a broken org_id.
+  const requestedOrgId = isSuperAdmin ? searchParams.get("orgId") : null;
+  const [targetOrg, setTargetOrg] = useState(null); // { id, name, ... } once validated
+  const [targetOrgError, setTargetOrgError] = useState(null);
+  const [targetOrgLoading, setTargetOrgLoading] = useState(!!requestedOrgId);
+
+  useEffect(() => {
+    if (!requestedOrgId) {
+      setTargetOrg(null);
+      setTargetOrgError(null);
+      setTargetOrgLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTargetOrgLoading(true);
+    setTargetOrgError(null);
+    adminApi.getOrganization(requestedOrgId)
+      .then(org => {
+        if (cancelled) return;
+        if (!org) {
+          setTargetOrg(null);
+          setTargetOrgError("That organization couldn't be found. It may have been removed.");
+        } else {
+          setTargetOrg(org);
+        }
+      })
+      .catch(err => {
+        if (cancelled) return;
+        setTargetOrg(null);
+        setTargetOrgError(err.message || "Failed to load organization.");
+      })
+      .finally(() => { if (!cancelled) setTargetOrgLoading(false); });
+    return () => { cancelled = true; };
+  }, [requestedOrgId]);
+
+  // Only true once the target org has round-tripped through validation —
+  // a still-loading or invalid orgId must not relax the Organization step.
+  const isSuperAdminWithOrg = isSuperAdmin && !!targetOrg;
+
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initialState);
   const [copied, setCopied] = useState(false);
@@ -425,9 +472,12 @@ export default function TournamentBuilderWizard() {
 
   const canProceed = () => {
     switch (step) {
-      // org_admins already belong to an org — these fields are discarded
-      // by createTournament() for that path, so don't block on them here.
-      case 0: return isOrgAdmin || (data.orgName.trim() && data.orgEmail.trim());
+      // org_admins already belong to an org, and a super_admin who's
+      // picked a valid target org via ?orgId= is in the same boat —
+      // these fields are discarded by createTournament() for both paths,
+      // so don't block on them here. A super_admin with no/invalid orgId
+      // param still goes through the full org-creation flow.
+      case 0: return isOrgAdmin || isSuperAdminWithOrg || (data.orgName.trim() && data.orgEmail.trim());
       case 1: return data.eventName.trim() && data.sport && data.eventDates[0]?.date && data.venueName.trim();
       default: return true;
     }
@@ -447,7 +497,7 @@ export default function TournamentBuilderWizard() {
     setCreating(true);
     setCreateError(null);
     try {
-      const result = await createTournament(data, adminUser);
+      const result = await createTournament(data, adminUser, isSuperAdminWithOrg ? targetOrg.id : null);
       setCreateResult(result);
     } catch (err) {
       console.error("Tournament creation failed:", err);
@@ -462,6 +512,17 @@ export default function TournamentBuilderWizard() {
     <div className="space-y-6">
       {isOrgAdmin && (
         <Tip>You're adding a new event to your existing organization — the fields below are not used for this run (editing org branding outside the Wizard is coming later). Skip ahead to the Event step.</Tip>
+      )}
+      {isSuperAdminWithOrg && (
+        <Tip>You're adding a new event to <strong>{targetOrg.name}</strong> — the fields below are not used for this run (editing org branding outside the Wizard is coming later). Skip ahead to the Event step.</Tip>
+      )}
+      {isSuperAdmin && requestedOrgId && targetOrgLoading && (
+        <Tip>Loading organization…</Tip>
+      )}
+      {isSuperAdmin && requestedOrgId && !targetOrgLoading && targetOrgError && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+          <p className="text-sm text-red-400">{targetOrgError} You can still create a brand-new organization below, or go back and pick the org again.</p>
+        </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <Field label="Organization Name" required><Input value={data.orgName} onChange={v => update("orgName", v)} placeholder="Ebb Tide Rugby Club" icon={Building2} /></Field>

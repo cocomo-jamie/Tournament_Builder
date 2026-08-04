@@ -21,6 +21,7 @@ import { registrations as registrationsApi, volunteers as volunteersApi, events 
 import { useRealtimeRegistrations, useRealtimeTeams, useRealtimeMatches, useRealtimeAreas } from "../hooks/useRealtime";
 import { useScreenLock } from "../hooks/useScreenLock";
 import { verifyBeneficiaryRegistration } from "../utils/verifyBeneficiaryRegistration";
+import OrgEventNav from "../components/OrgEventNav";
 
 /* ═══════════════════════════════════════════════════════════
    STYLES
@@ -2618,7 +2619,7 @@ export default function AdminDashboard() {
   const B = config.brand;
 
   const allCtxs = [
-    { id: "build", label: "Build", icon: Settings },
+    { id: "build", label: "Manage", icon: Settings },
     { id: "publish", label: "Publish", icon: FileText },
     { id: "gameday", label: "Game Day", icon: Zap },
     { id: "team", label: "Team", icon: Shield },
@@ -2673,6 +2674,7 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <OrgEventNav adminUser={adminUser} currentEventId={eventId} currentOrgId={config.org?.id} accentColor={B.accent} />
             <div style={{ textAlign: "right" }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{adminUser?.display_name || adminUser?.email || "—"}</p>
               {roleLabel && <p style={{ fontSize: 10, color: B.accent, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{roleLabel}</p>}

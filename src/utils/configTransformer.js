@@ -49,6 +49,7 @@ export function transformEventToConfig(event, options = {}) {
   return {
     // ── Organization ──
     org: {
+      id: org.id || null,
       name: org.name || "",
       email: org.email || "",
       phone: org.phone || "",

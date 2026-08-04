@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { admin as adminApi, commitments as commitmentsApi, billing as billingApi, events as eventsApi } from "../services/api";
+import OrgEventNav from "../components/OrgEventNav";
 
 const S = {
   input: { width: "100%", padding: "10px 14px", background: "#ffffff08", border: "1px solid #ffffff20", borderRadius: 10, color: "#fff", fontSize: 14, fontFamily: "'Inter',sans-serif", outline: "none" },
@@ -449,6 +450,7 @@ export default function SuperAdminDashboard() {
             <div><p style={{ fontSize: 14, fontWeight: 800 }}>Platform Admin</p><p style={{ fontSize: 10, color: "#ffffff40" }}>Super Admin Console</p></div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <OrgEventNav adminUser={adminUser} accentColor="#D4A843" />
             <div style={{ textAlign: "right" }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{adminUser?.display_name || adminUser?.email}</p>
               <p style={{ fontSize: 10, color: "#D4A843", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Super Admin</p>

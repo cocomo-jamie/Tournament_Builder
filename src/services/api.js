@@ -1464,6 +1464,20 @@ export const admin = {
     return data;
   },
 
+  // Fetch a single organization by id (Wizard: validate/name a super_admin's
+  // chosen target org before letting them add an event to it). Returns null
+  // rather than throwing when the id doesn't match any row, so callers can
+  // treat a bad/stale orgId as "not found" rather than a hard error.
+  async getOrganization(orgId) {
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("id, name, email, created_at")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
   // List all organizations (super_admin dashboard: org dropdown + list)
   async listOrganizations() {
     const { data, error } = await supabase

@@ -35,15 +35,39 @@ const AREA_NAME_SINGULAR = {
  *   If adminUser.org_id is set (org_admin), the Wizard adds a new event to
  *   that existing org instead of creating a new one — RLS migration 010
  *   restricts organizations INSERT to super_admin, and an org_admin only
- *   has one org to begin with. If adminUser.org_id is null (super_admin),
- *   a brand-new organization is created as before.
+ *   has one org to begin with. If adminUser.org_id is null (super_admin)
+ *   and no targetOrgId is given, a brand-new organization is created as
+ *   before.
+ * @param {string|null} targetOrgId - Set when a super_admin has picked an
+ *   existing org to add this event to (Wizard's `?orgId=` param), as
+ *   opposed to creating a brand-new org. Distinct from adminUser.org_id
+ *   (which is always null for a super_admin) — kept as a separate
+ *   parameter so the two provenances (an org_admin's own org vs. a
+ *   super_admin's chosen target) stay readable in the code, even though
+ *   both skip the org INSERT and reuse the given id.
  * @returns {Object} { orgId, eventId } - IDs of created/reused records
  * @throws {Error} with descriptive message on failure
  */
-export async function createTournament(data, adminUser) {
+export async function createTournament(data, adminUser, targetOrgId = null) {
   try {
     // ── Step 1: Organization ──
     let orgId = adminUser?.org_id || null;
+
+    if (!orgId && targetOrgId) {
+      // super_admin path: reuse an existing org the wizard was launched
+      // against. Re-validate server-side — the query param could be
+      // stale or tampered with — rather than trusting the caller.
+      const { data: org, error: orgLookupError } = await supabase
+        .from("organizations")
+        .select("id")
+        .eq("id", targetOrgId)
+        .maybeSingle();
+
+      if (orgLookupError) throw new Error(`Failed to verify target organization: ${orgLookupError.message}`);
+      if (!org) throw new Error("The selected organization no longer exists. Please restart the wizard.");
+
+      orgId = org.id;
+    }
 
     if (!orgId) {
       // super_admin path: create a brand-new organization.
@@ -71,10 +95,11 @@ export async function createTournament(data, adminUser) {
       if (orgError) throw new Error(`Failed to create organization: ${orgError.message}`);
       orgId = org.id;
     }
-    // else: org_admin path — reuse their existing org_id. Any org-info
-    // fields the Wizard's Organization step collected (name, branding,
-    // logo, etc.) are discarded here; editing org branding outside the
-    // Wizard is future work.
+    // else: org_admin path, or super_admin with a validated targetOrgId —
+    // reuse the existing org_id. Any org-info fields the Wizard's
+    // Organization step collected (name, branding, logo, etc.) are
+    // discarded here; editing org branding outside the Wizard is future
+    // work.
 
     // ── Step 2: Event ──
     const areaLabel = AREA_LABEL_PLURAL[data.sport] || "Playing Areas";
